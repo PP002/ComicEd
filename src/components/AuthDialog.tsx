@@ -6,6 +6,7 @@ import { Loader2, Mail, Lock, User, LogIn, UserPlus, Shield, BookOpen, Sparkles 
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { GoogleLogin } from '@react-oauth/google';
+import { signInWithGoogleDrive, requestGoogleDriveTokenSilently } from '@/lib/googleDrive';
 
 import { useLanguage } from '@/context/LanguageContext';
 
@@ -183,7 +184,8 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
         setUser({
           email: data.user.email || targetEmail,
           name: data.user.user_metadata?.display_name || targetEmail.split('@')[0],
-          uid: data.user.id
+          uid: data.user.id,
+          authProvider: 'email',
         });
         toast.success("Account verified successfully! Welcome.");
         setVerificationSentEmail(null);
@@ -293,7 +295,8 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
           setUser({
             email: updatedUser.email || email || "",
             name: updatedUser.user_metadata?.full_name || updatedUser.user_metadata?.name || updatedUser.user_metadata?.display_name || (updatedUser.email ? updatedUser.email.split('@')[0] : "User"),
-            uid: updatedUser.id
+            uid: updatedUser.id,
+            authProvider: 'email',
           });
         }
         setIsPasswordRecovery(false);
@@ -342,7 +345,10 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
           name: sessionData.session.user.user_metadata?.full_name || sessionData.session.user.email?.split('@')[0] || "User",
           uid: sessionData.session.user.id,
           avatarUrl: sessionData.session.user.user_metadata?.avatar_url,
+          authProvider: 'google',
         });
+        // Silently request Google Drive token for the Google user so Drive is ready immediately
+        requestGoogleDriveTokenSilently(sessionData.session.user.email || undefined).catch(() => {});
         toast.success("Successfully signed in with Google!");
         onOpenChange(false);
       }
@@ -355,34 +361,47 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
 
   const handleGoogleSignInClick = async () => {
     setLoading(true);
-    const supabase = getSupabase(supabaseUrl, supabaseAnonKey);
-    if (!supabase) {
-      toast.error("Supabase is not connected. Please add your credentials in Settings to enable Google Sign-In.");
-      setLoading(false);
-      return;
-    }
     try {
-      const { error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: { 
-          redirectTo: window.location.origin,
-          queryParams: {
-            prompt: 'select_account'
-          }
-        }
-      });
-      if (error) {
-        if (error.message?.includes('not enabled') || error.message?.includes('Unsupported provider')) {
-          toast.error("Google provider is not enabled in your Supabase project. Please enable it in Authentication > Providers.");
-        } else {
-          toast.error(error.message || "Failed to sign in with Google.");
-        }
+      // 1. Authenticate with Google and obtain Drive access token directly
+      const res = await signInWithGoogleDrive();
+      if (res?.user) {
+        setUser({
+          email: res.user.email || "",
+          name: res.user.displayName || res.user.email?.split('@')[0] || "User",
+          uid: res.user.uid,
+          avatarUrl: res.user.photoURL || undefined,
+          authProvider: 'google',
+        });
+        toast.success("Successfully signed in with Google!");
+        onOpenChange(false);
+        return;
+      }
+    } catch (fbErr: any) {
+      const isClosed = fbErr?.code === 'auth/popup-closed-by-user' || fbErr?.code === 'auth/cancelled-popup-request';
+      if (isClosed) {
         setLoading(false);
         return;
       }
-    } catch (err: any) {
-      console.warn("Supabase Google OAuth error:", err.message);
-      toast.error("Failed to connect to Google login.");
+      // 2. Fallback to Supabase OAuth if Firebase popup was blocked or failed
+      const supabase = getSupabase(supabaseUrl, supabaseAnonKey);
+      if (supabase) {
+        try {
+          const { error } = await supabase.auth.signInWithOAuth({
+            provider: 'google',
+            options: { 
+              redirectTo: window.location.origin,
+              queryParams: {
+                prompt: 'select_account',
+                scope: 'https://www.googleapis.com/auth/drive.file https://www.googleapis.com/auth/drive.readonly'
+              }
+            }
+          });
+          if (!error) return;
+        } catch (supErr) {}
+      }
+      const isBlocked = fbErr?.code === 'auth/popup-blocked' || fbErr?.message?.includes('popup-blocked');
+      toast.error(isBlocked ? "Google pop-up was blocked by browser. Please allow pop-ups." : (fbErr?.message || "Failed to sign in with Google."));
+    } finally {
       setLoading(false);
     }
   };
@@ -484,7 +503,8 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
         setUser({
           email: data.user.email || email,
           name: data.user.user_metadata?.display_name || email.split('@')[0],
-          uid: data.user.id
+          uid: data.user.id,
+          authProvider: 'email',
         });
         toast.success("Welcome back! Signed in securely.");
         onOpenChange(false);

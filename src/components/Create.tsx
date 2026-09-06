@@ -4841,9 +4841,10 @@ export const Create: React.FC<CreateProps> = ({
                     variant="ghost"
                     size="sm"
                     className="h-7 px-2 text-xs"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onTouchStart={(e) => e.preventDefault()}
-                    onClick={() => execDocCommand("formatBlock", "H1")}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      execDocCommand("formatBlock", "H1");
+                    }}
                   >
                     <Heading1 className="w-3.5 h-3.5 sm:mr-1.5" />{" "}
                     <span className="hidden sm:inline">{t("title")}</span>
@@ -4852,9 +4853,10 @@ export const Create: React.FC<CreateProps> = ({
                     variant="ghost"
                     size="sm"
                     className="h-7 px-2 text-xs"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onTouchStart={(e) => e.preventDefault()}
-                    onClick={() => execDocCommand("formatBlock", "H2")}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      execDocCommand("formatBlock", "H2");
+                    }}
                   >
                     <Heading2 className="w-3.5 h-3.5 sm:mr-1.5" />{" "}
                     <span className="hidden sm:inline">{t("subtitle")}</span>
@@ -4864,9 +4866,10 @@ export const Create: React.FC<CreateProps> = ({
                     variant="ghost"
                     size="sm"
                     className="h-7 px-2 text-xs"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onTouchStart={(e) => e.preventDefault()}
-                    onClick={() => execDocCommand("formatBlock", "P")}
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      execDocCommand("formatBlock", "P");
+                    }}
                   >
                     <Type className="w-3.5 h-3.5 sm:mr-1.5" />{" "}
                     <span className="hidden sm:inline">{t("text")}</span>
@@ -4876,9 +4879,8 @@ export const Create: React.FC<CreateProps> = ({
                     variant="ghost"
                     size="sm"
                     className="h-7 px-2 text-xs text-primary"
-                    onMouseDown={(e) => e.preventDefault()}
-                    onTouchStart={(e) => e.preventDefault()}
-                    onClick={() => {
+                    onPointerDown={(e) => {
+                      e.preventDefault();
                       const selection = window.getSelection()?.toString();
                       if (selection) {
                         window.dispatchEvent(
@@ -5179,8 +5181,9 @@ export const Create: React.FC<CreateProps> = ({
                   });
                 } else {
                   setImageMenuProps((prev) => ({ ...prev, visible: false }));
-                  if (target === editorRef.current) {
-                    const sel = window.getSelection();
+                  const sel = window.getSelection();
+                  // Check if selection is collapsed, only force cursor to end if user just clicked blank space
+                  if (target === editorRef.current && (!sel || sel.isCollapsed)) {
                     if (sel) {
                       let p = editorRef.current.lastElementChild;
                       if (

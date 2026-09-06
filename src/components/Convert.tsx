@@ -27,6 +27,7 @@ import {
 } from '@/lib/historyCache';
 import { detectReadingDirectionWaterfall, ReadingDirection } from '@/utils/readingDirection';
 import { GoogleDriveDialog, GoogleDriveIcon } from './GoogleDriveDialog';
+import { loadPuterScript } from '@/lib/puterLoader';
 // @ts-ignore
 import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
@@ -1304,6 +1305,7 @@ export async function transcribeTextsViaPieces(
       }
     } else if (engine === 'puter') {
       // Attempt: Puter.js with mistral/pixtral
+      await loadPuterScript();
       if (typeof window !== 'undefined' && (window as any).puter?.ai?.chat) {
           try {
               console.log(`[Frontend] Trying Puter.js OCR for piece ${i}`);

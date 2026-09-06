@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useEffect, ReactNode } from
 import { toast } from 'sonner';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { getApiUrl } from '@/lib/api';
+import { initGoogleDriveAuth, setDriveAccessToken } from '@/lib/googleDrive';
 
 
 export type LlmEngine = 'gemini' | 'local' | 'pollinations' | 'openai' | 'claude' | 'qwen' | 'puter';
@@ -12,6 +13,7 @@ export interface UserSession {
   uid: string;
   avatarUrl?: string;
   photoURL?: string;
+  authProvider?: 'google' | 'email';
 }
 
 export interface AppSettings {
@@ -288,15 +290,32 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
     const supabase = getSupabase(supabaseUrl, supabaseAnonKey);
     if (!supabase) return;
 
+    // Helper to extract provider and token
+    const applySupabaseSession = (session: any) => {
+      if (!session?.user) {
+        setUser(null);
+        return;
+      }
+      const isGoogle = session.user.app_metadata?.provider === 'google' ||
+                       session.user.identities?.some((id: any) => id.provider === 'google') ||
+                       (session.user.email && session.user.email.endsWith('@gmail.com'));
+      const authProvider: 'google' | 'email' = isGoogle ? 'google' : 'email';
+      if (session.provider_token) {
+        setDriveAccessToken(session.provider_token);
+      }
+      setUser({
+        email: session.user.email || "",
+        name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || "User",
+        avatarUrl: session.user.user_metadata?.avatar_url || session.user.user_metadata?.picture,
+        uid: session.user.id,
+        authProvider
+      });
+    };
+
     // Fetch initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
-        setUser({
-          email: session.user.email || "",
-          name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || "User",
-          avatarUrl: session.user.user_metadata?.avatar_url || session.user.user_metadata?.picture,
-          uid: session.user.id
-        });
+        applySupabaseSession(session);
       }
     });
 
@@ -307,18 +326,32 @@ export function AppSettingsProvider({ children }: { children: ReactNode }) {
         toast.info("Password reset link verified! Please enter your new password below.");
       }
       if (session?.user) {
-        setUser({
-          email: session.user.email || "",
-          name: session.user.user_metadata?.full_name || session.user.user_metadata?.name || session.user.user_metadata?.display_name || session.user.email?.split('@')[0] || "User",
-          avatarUrl: session.user.user_metadata?.avatar_url || session.user.user_metadata?.picture,
-          uid: session.user.id
-        });
+        applySupabaseSession(session);
       } else {
         setUser(null);
       }
     });
 
-    return () => subscription.unsubscribe();
+    // Listen to Google Drive / Firebase session state
+    const unsubscribeGdrive = initGoogleDriveAuth((driveUser) => {
+      if (driveUser) {
+        setUser((prev) => {
+          if (prev && prev.authProvider === 'google') return prev;
+          return {
+            email: driveUser.email || prev?.email || "",
+            name: driveUser.displayName || prev?.name || driveUser.email?.split('@')[0] || "User",
+            avatarUrl: driveUser.photoURL || prev?.avatarUrl,
+            uid: driveUser.uid,
+            authProvider: 'google'
+          };
+        });
+      }
+    });
+
+    return () => {
+      subscription.unsubscribe();
+      if (unsubscribeGdrive) unsubscribeGdrive();
+    };
   }, [supabaseUrl, supabaseAnonKey]);
 
 

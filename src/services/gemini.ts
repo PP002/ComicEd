@@ -1,6 +1,7 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { uploadMediaToR2 } from "../lib/r2Storage";
 import { getApiUrl } from '@/lib/api';
+import { loadPuterScript } from '../lib/puterLoader';
 
 
 export interface ComicText {
@@ -384,6 +385,7 @@ async function runVisionModelDirect(
 
   // Puter.js
   if (engine === 'puter') {
+    await loadPuterScript();
     if (typeof (window as any).puter?.ai?.chat === 'function') {
       const resp = await (window as any).puter.ai.chat(promptText, {
         model: model || "gpt-4o",
@@ -475,6 +477,7 @@ async function runTextModelDirect(
 
   // Puter.js
   if (engine === 'puter') {
+    await loadPuterScript();
     if (typeof (window as any).puter?.ai?.chat === 'function') {
       const resp = await (window as any).puter.ai.chat(promptText, { model: model || "gpt-4o" });
       return typeof resp === 'string' ? resp : resp?.message?.content || "";

@@ -99,7 +99,9 @@ async function startServer() {
   app.use(express.json({ limit: '50mb' }));
 
   app.use((req, res, next) => {
-    console.log(`[Express] ${req.method} ${req.url}`);
+    if (req.path.startsWith('/api/')) {
+      console.log(`[API] ${req.method} ${req.path}`);
+    }
     next();
   });
 

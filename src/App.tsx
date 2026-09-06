@@ -64,8 +64,11 @@ import { usePageSEO } from "./hooks/usePageSEO";
 
 function GoogleAuthProviderWrapper({ children }: { children: React.ReactNode }) {
   const { googleClientId } = useAppSettings();
+  if (!googleClientId || !googleClientId.trim() || googleClientId === "dummy") {
+    return <>{children}</>;
+  }
   return (
-    <GoogleOAuthProvider clientId={googleClientId || "dummy"}>
+    <GoogleOAuthProvider clientId={googleClientId}>
       {children}
     </GoogleOAuthProvider>
   );

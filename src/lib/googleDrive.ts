@@ -30,7 +30,8 @@ provider.setCustomParameters({
   prompt: 'select_account',
 });
 
-// In-memory access token cache (MANDATORY: never store in localStorage or sessionStorage)
+// Active access token cache (in-memory with secure tab session storage fallback)
+const SESSION_TOKEN_KEY = 'ebookcc_gdrive_access_token';
 let cachedAccessToken: string | null = null;
 let cachedUser: User | null = null;
 let isSigningIn = false;
@@ -68,6 +69,22 @@ const IDB_DRIVE_CACHE_PREFIX = 'ebookcc_gdrive_cached_file_';
 const IDB_DRIVE_META_KEY = 'ebookcc_gdrive_cached_files_meta';
 
 /**
+ * Set active Drive access token from any Google login flow.
+ */
+export const setDriveAccessToken = (token: string, user?: User | any | null) => {
+  if (!token) return;
+  cachedAccessToken = token;
+  if (user) {
+    cachedUser = user;
+  }
+  try {
+    sessionStorage.setItem(SESSION_TOKEN_KEY, token);
+  } catch (e) {
+    // SessionStorage may be restricted in some iframes
+  }
+};
+
+/**
  * Initialize auth state listener.
  */
 export const initGoogleDriveAuth = (
@@ -76,16 +93,61 @@ export const initGoogleDriveAuth = (
 ) => {
   return onAuthStateChanged(auth, async (user: User | null) => {
     cachedUser = user;
-    if (user) {
-      if (cachedAccessToken) {
-        if (onAuthSuccess) onAuthSuccess(user, cachedAccessToken);
-      } else if (!isSigningIn) {
-        // Token must be acquired through signInWithPopup user interaction
-        if (onAuthFailure) onAuthFailure();
+    const token = await getDriveAccessToken();
+    if (user && token) {
+      if (onAuthSuccess) onAuthSuccess(user, token);
+    } else if (user && !token && !isSigningIn) {
+      // Try silent retrieval
+      const silentToken = await requestGoogleDriveTokenSilently(user.email || undefined);
+      if (silentToken && onAuthSuccess) {
+        onAuthSuccess(user, silentToken);
+      } else if (onAuthFailure) {
+        onAuthFailure();
       }
-    } else {
+    } else if (!user) {
       cachedAccessToken = null;
       if (onAuthFailure) onAuthFailure();
+    }
+  });
+};
+
+/**
+ * Silently request a Google Drive access token if the user is already logged in with Google.
+ * Uses Google Identity Services without showing extra login popups.
+ */
+export const requestGoogleDriveTokenSilently = async (emailHint?: string): Promise<string | null> => {
+  const currentToken = await getDriveAccessToken();
+  if (currentToken) return currentToken;
+
+  return new Promise((resolve) => {
+    try {
+      const gClientId = firebaseConfig.oAuthClientId;
+      if (typeof window !== 'undefined' && (window as any).google?.accounts?.oauth2 && gClientId) {
+        const tokenClient = (window as any).google.accounts.oauth2.initTokenClient({
+          client_id: gClientId,
+          scope: DRIVE_SCOPES.join(' '),
+          hint: emailHint || '',
+          prompt: '', // Silent request; does not show dialog if user already consented
+          callback: (response: any) => {
+            if (response?.access_token) {
+              setDriveAccessToken(response.access_token);
+              resolve(response.access_token);
+            } else {
+              resolve(null);
+            }
+          },
+          error_callback: (err: any) => {
+            console.warn('[GoogleDrive] Silent token request fallback:', err?.type || err);
+            resolve(null);
+          }
+        });
+        tokenClient.requestAccessToken({ prompt: '' });
+      } else {
+        resolve(null);
+      }
+    } catch (e) {
+      console.warn('[GoogleDrive] Silent token request exception:', e);
+      resolve(null);
     }
   });
 };
@@ -104,6 +166,9 @@ export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken
     }
     cachedAccessToken = credential.accessToken;
     cachedUser = result.user;
+    try {
+      sessionStorage.setItem(SESSION_TOKEN_KEY, credential.accessToken);
+    } catch (e) {}
     return { user: result.user, accessToken: cachedAccessToken };
   } catch (error: any) {
     const isPopupBlocked = error?.code === 'auth/popup-blocked' || error?.message?.includes('popup-blocked');
@@ -122,33 +187,51 @@ export const signInWithGoogleDrive = async (): Promise<{ user: User; accessToken
 };
 
 /**
- * Retrieve the active in-memory access token.
+ * Retrieve the active access token. Checks in-memory cache then sessionStorage.
  */
 export const getDriveAccessToken = async (): Promise<string | null> => {
+  if (!cachedAccessToken) {
+    try {
+      cachedAccessToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
+    } catch (e) {}
+  }
   return cachedAccessToken;
 };
 
 /**
- * Check if the user is currently authenticated with a valid in-memory token.
+ * Check if the user is currently authenticated with a valid token and user.
  */
 export const isDriveAuthenticated = (): boolean => {
-  return !!(cachedAccessToken && cachedUser);
+  if (!cachedAccessToken) {
+    try {
+      cachedAccessToken = sessionStorage.getItem(SESSION_TOKEN_KEY);
+    } catch (e) {}
+  }
+  return !!(cachedAccessToken && (cachedUser || auth.currentUser));
 };
 
 /**
  * Retrieve current cached user.
  */
 export const getCurrentDriveUser = (): User | null => {
+  if (!cachedUser) {
+    cachedUser = auth.currentUser;
+  }
   return cachedUser;
 };
 
 /**
- * Sign out and clear cached token.
+ * Sign out and clear cached token and session.
  */
 export const signOutGoogleDrive = async (): Promise<void> => {
-  await fbSignOut(auth);
+  try {
+    await fbSignOut(auth);
+  } catch (e) {}
   cachedAccessToken = null;
   cachedUser = null;
+  try {
+    sessionStorage.removeItem(SESSION_TOKEN_KEY);
+  } catch (e) {}
 };
 
 /* ─────────────────────────────────────────────────────────────────────────────

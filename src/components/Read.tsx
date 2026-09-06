@@ -23,8 +23,10 @@ import { getLocalNotes, fetchCloudComments } from '@/lib/commentsStorage';
 import { fetchPublishedWorksFromR2 } from '@/lib/r2Storage';
 import { detectReadingDirectionWaterfall, ReadingDirection } from '@/utils/readingDirection';
 import { GoogleDriveDialog, GoogleDriveIcon } from '@/components/GoogleDriveDialog';
+// @ts-ignore
+import pdfWorkerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 
-pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
+pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
 function SplitPanelsIcon({ className = "w-4 h-4" }: { className?: string }) {
   return (
@@ -1193,18 +1195,6 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                       {notesCount > 99 ? '99+' : notesCount}
                     </span>
                   )}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="icon"
-                  className="h-8 w-8 text-foreground"
-                  onClick={() => {
-                    setGoogleDriveMode('export');
-                    setGoogleDriveOpen(true);
-                  }}
-                  title="Google Drive"
-                >
-                  <GoogleDriveIcon className="w-3.5 h-3.5" />
                 </Button>
               </div>
             </div>

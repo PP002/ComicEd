@@ -23,6 +23,7 @@ import {
   signOutGoogleDrive,
   getDriveAccessToken,
   getCurrentDriveUser,
+  requestGoogleDriveTokenSilently,
   listDriveFiles,
   listDriveFolders,
   createDriveFolder,
@@ -33,6 +34,7 @@ import {
   clearAllDriveCache,
   formatFileSize,
 } from '@/lib/googleDrive';
+import { useAppSettings } from '@/context/AppSettingsContext';
 import {
   Loader2,
   Folder,
@@ -51,6 +53,7 @@ import {
   CheckCircle2,
   ExternalLink,
   AlertTriangle,
+  Mail,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -99,6 +102,22 @@ export function GoogleDriveDialog({
   const [isAuthenticating, setIsAuthenticating] = useState(false);
   const [popupBlocked, setPopupBlocked] = useState(false);
 
+  const { user: appUser } = useAppSettings();
+
+  // Determine if the user is signed into the application with a Google account
+  const isGoogleUser = useMemo(() => {
+    return Boolean(
+      appUser?.authProvider === 'google' ||
+      (appUser?.email && appUser.email.endsWith('@gmail.com')) ||
+      !!getCurrentDriveUser()
+    );
+  }, [appUser]);
+
+  // "Only request from Email users"
+  const isEmailUser = useMemo(() => {
+    return Boolean(appUser && !isGoogleUser && appUser.authProvider === 'email');
+  }, [appUser, isGoogleUser]);
+
   const isInIframe = useMemo(() => {
     return typeof window !== 'undefined' && window.self !== window.top;
   }, []);
@@ -141,20 +160,46 @@ export function GoogleDriveDialog({
   }, [open, initialMode, exportFile]);
 
   const checkAuthStatus = async () => {
-    const token = await getDriveAccessToken();
-    const user = getCurrentDriveUser();
-    if (token && user) {
+    let token = await getDriveAccessToken();
+    let driveUser = getCurrentDriveUser();
+
+    // If already signed in with a Google account in the app, attempt silent auto-connection
+    if (!token && isGoogleUser) {
+      setIsAuthenticating(true);
+      try {
+        token = await requestGoogleDriveTokenSilently(appUser?.email || driveUser?.email || undefined);
+      } catch (err) {
+        console.warn('[GoogleDrive] Auto-connect attempt:', err);
+      } finally {
+        setIsAuthenticating(false);
+      }
+    }
+
+    if (token) {
       setIsAuthenticated(true);
+      const activeUser = driveUser || {
+        displayName: appUser?.name || appUser?.email?.split('@')[0] || 'Google User',
+        email: appUser?.email,
+        photoURL: appUser?.avatarUrl || appUser?.photoURL,
+      };
       setUserProfile({
-        name: user.displayName || undefined,
-        email: user.email || undefined,
-        photoURL: user.photoURL || undefined,
+        name: (activeUser as any).displayName || undefined,
+        email: (activeUser as any).email || undefined,
+        photoURL: (activeUser as any).photoURL || undefined,
       });
       fetchFiles(currentFolderId, searchQuery, filterType);
       fetchFolders();
     } else {
       setIsAuthenticated(false);
-      setUserProfile(null);
+      if (isGoogleUser && appUser) {
+        setUserProfile({
+          name: appUser.name || appUser.email?.split('@')[0],
+          email: appUser.email,
+          photoURL: appUser.avatarUrl || appUser.photoURL,
+        });
+      } else {
+        setUserProfile(null);
+      }
     }
   };
 
@@ -469,15 +514,70 @@ export function GoogleDriveDialog({
           {!isAuthenticated ? (
             /* Unauthenticated View */
             <div className="py-8 px-4 flex flex-col items-center text-center max-w-md mx-auto space-y-5">
-              <div className="w-16 h-16 rounded-2xl bg-muted/60 flex items-center justify-center p-3 shadow-inner">
-                <GoogleDriveIcon className="w-full h-full" />
+              <div className="relative">
+                <div className="w-16 h-16 rounded-2xl bg-muted/60 flex items-center justify-center p-3 shadow-inner">
+                  <GoogleDriveIcon className="w-full h-full" />
+                </div>
+                {isAuthenticating && (
+                  <div className="absolute -bottom-1 -right-1 bg-primary text-primary-foreground rounded-full p-1 shadow-xs animate-spin">
+                    <Loader2 className="w-3.5 h-3.5" />
+                  </div>
+                )}
               </div>
-              <div className="space-y-2">
-                <h3 className="text-lg font-bold text-foreground">Connect Google Drive</h3>
-                <p className="text-xs text-muted-foreground leading-relaxed">
-                  Import comics, manga, EPUBs, and PDFs directly from your Google Drive into the Reader and Converter, or backup your converted books to Drive.
-                </p>
-              </div>
+
+              {isAuthenticating ? (
+                /* Connecting State */
+                <div className="space-y-2">
+                  <h3 className="text-lg font-bold text-foreground">Connecting to Google Drive...</h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    {isGoogleUser && appUser?.email
+                      ? `Accessing Google Drive with your active Google account (${appUser.email})...`
+                      : 'Verifying Google Drive authentication...'}
+                  </p>
+                </div>
+              ) : isGoogleUser ? (
+                /* Google User - Already Logged In With Google Account */
+                <div className="space-y-3 w-full">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-700 dark:text-emerald-300 text-xs font-medium">
+                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                    Google Account Active
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-bold text-foreground">Enable Google Drive</h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      You are already logged into EbookCC with your Google account{' '}
+                      <span className="font-semibold text-foreground">
+                        {appUser?.email || userProfile?.email || 'Google Account'}
+                      </span>
+                      . Grant Google Drive access with one click to browse and backup your library.
+                    </p>
+                  </div>
+                </div>
+              ) : isEmailUser ? (
+                /* Email User - "Only request from Email users" */
+                <div className="space-y-3 w-full">
+                  <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20 text-blue-700 dark:text-blue-300 text-xs font-medium">
+                    <Mail className="w-3.5 h-3.5 text-blue-500" />
+                    Signed in with Email
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="text-lg font-bold text-foreground">Connect Google Drive</h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed">
+                      You are signed in with an Email account{' '}
+                      <span className="font-semibold text-foreground">({appUser?.email})</span>.
+                      To import or back up your books to Google Drive, please connect your Google account.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                /* Guest User */
+                <div className="space-y-2">
+                  <h3 className="text-lg font-bold text-foreground">Connect Google Drive</h3>
+                  <p className="text-xs text-muted-foreground leading-relaxed">
+                    Import comics, manga, EPUBs, and PDFs directly from your Google Drive into the Reader and Converter, or backup your converted books to Drive.
+                  </p>
+                </div>
+              )}
 
               {/* Popup Blocked Warning Box */}
               {popupBlocked && (
@@ -517,7 +617,7 @@ export function GoogleDriveDialog({
                 </div>
               )}
 
-              {/* Official Google Styled Button */}
+              {/* Action Button */}
               <div className="w-full space-y-2">
                 <button
                   type="button"
@@ -528,14 +628,22 @@ export function GoogleDriveDialog({
                   {isAuthenticating ? (
                     <Loader2 className="w-4 h-4 animate-spin text-primary" />
                   ) : (
-                    <svg className="w-4 h-4" viewBox="0 0 48 48">
+                    <svg className="w-4 h-4 shrink-0" viewBox="0 0 48 48">
                       <path fill="#EA4335" d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" />
                       <path fill="#4285F4" d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" />
                       <path fill="#FBBC05" d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" />
                       <path fill="#34A853" d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" />
                     </svg>
                   )}
-                  <span>{isAuthenticating ? 'Connecting...' : 'Sign in with Google'}</span>
+                  <span>
+                    {isAuthenticating
+                      ? 'Connecting...'
+                      : isGoogleUser
+                      ? `Enable Google Drive for ${appUser?.email || 'Account'}`
+                      : isEmailUser
+                      ? 'Connect Google Account'
+                      : 'Sign in with Google'}
+                  </span>
                 </button>
 
                 {isInIframe && !popupBlocked && (

@@ -7,6 +7,7 @@ import { useLanguage } from '@/context/LanguageContext';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { AuthDialog } from './AuthDialog';
+import { signOutGoogleDrive } from '@/lib/googleDrive';
 
 export function AppSettingsDialog() {
   const { t } = useLanguage();
@@ -71,6 +72,7 @@ export function AppSettingsDialog() {
   };
 
   const handleLogout = async () => {
+    await signOutGoogleDrive().catch(() => {});
     if (supabaseUrl && supabaseAnonKey) {
       const supabase = getSupabase(supabaseUrl, supabaseAnonKey);
       if (supabase) {
