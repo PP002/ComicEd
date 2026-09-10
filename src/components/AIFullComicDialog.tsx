@@ -81,53 +81,55 @@ export function AIFullComicDialog({ open, onOpenChange, onComicGenerated, initia
           });
           
           messages.push({ role: "user", content });
-          const models = ["openai", "qwen-coder", "llama", "mistral"];
+          const models = ["openai", "openai-fast", "gpt-oss"];
           
-          for (let i = 0; i < 4; i++) {
+          for (let i = 0; i < models.length; i++) {
             try {
               const pollRes = await fetch("https://text.pollinations.ai/", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                   messages,
-                  model: models[i % models.length],
-                  jsonMode: true,
+                  model: models[i],
                   seed: Math.floor(Math.random() * 100000)
-                })
+                }),
+                signal: AbortSignal.timeout(18000)
               });
 
               if (pollRes.ok) {
                 textResult = await pollRes.text();
                 break;
-              } else if (pollRes.status === 429 && i < 3) {
-                await new Promise(r => setTimeout(r, 2000 * (i + 1))); 
-              } else if (i === 3) {
+              } else if (pollRes.status === 429 && i < models.length - 1) {
+                await new Promise(r => setTimeout(r, 1500 * (i + 1))); 
+              } else if (i === models.length - 1) {
                 throw new Error("Pollinations API rate limit reached. Please wait a few moments and try again, or use a custom API key in Settings.");
               }
             } catch (err: any) {
-              if (i === 3) throw err;
+              if (i === models.length - 1) throw err;
             }
           }
         } else {
           // For text only, use GET to bypass Pollinations strict POST rate limits
           const textPrompt = `Create a comic book script based on this prompt: "${prompt}". Generate exactly ${pagesCount || 1} page(s). Each page should be structured with 4 to 6 panels for a rich comic flow. Keep panel descriptions visual and concise. Keep dialogue short.\n\nReturn ONLY a JSON object in this exact format: {"pages":[{"panels":[{"imagePrompt":"...","dialogue":"..."}]}]}`;
-          const models = ["openai", "qwen-coder", "llama", "mistral"];
+          const models = ["openai", "openai-fast", "gpt-oss"];
           
-          for (let i = 0; i < 4; i++) {
+          for (let i = 0; i < models.length; i++) {
             try {
               const seed = Math.floor(Math.random() * 100000);
-              const pollRes = await fetch(`https://text.pollinations.ai/${encodeURIComponent(textPrompt)}?json=true&model=${models[i % models.length]}&seed=${seed}`);
+              const pollRes = await fetch(`https://text.pollinations.ai/${encodeURIComponent(textPrompt)}?model=${models[i]}&seed=${seed}`, {
+                signal: AbortSignal.timeout(15000)
+              });
               
               if (pollRes.ok) {
                 textResult = await pollRes.text();
                 break;
-              } else if (pollRes.status === 429 && i < 3) {
+              } else if (pollRes.status === 429 && i < models.length - 1) {
                  await new Promise(r => setTimeout(r, 1000 * (i + 1)));
-              } else if (i === 3) {
+              } else if (i === models.length - 1) {
                 throw new Error("Pollinations API rate limit reached. Please wait a few moments and try again, or use a custom API key in Settings.");
               }
             } catch(err: any) {
-              if (i === 3) throw err;
+              if (i === models.length - 1) throw err;
             }
           }
         }

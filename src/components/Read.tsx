@@ -148,6 +148,10 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
   const [selectedBook, setSelectedBook] = useState<BookItem | null>(null);
   const [currentPage, setCurrentPage] = useState(0);
   const [location, setLocation] = useState<string | number>(0);
+  const [epubToc, setEpubToc] = useState<any[]>([]);
+  const [epubCurrentPage, setEpubCurrentPage] = useState<number>(0);
+  const [epubTotalPages, setEpubTotalPages] = useState<number>(0);
+  const renditionRef = React.useRef<any>(null);
   const [pdfNumPages, setPdfNumPages] = useState<number | null>(null);
   const [textPages, setTextPages] = useState(1);
   const textContentRef = React.useRef<HTMLDivElement>(null);
@@ -157,6 +161,8 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
   const { theme, setTheme } = useTheme();
 
   const [recentBooks, setRecentBooks] = useState<RecentBookMetadata[]>([]);
+
+
   const [isNotesSidebarOpen, setIsNotesSidebarOpen] = useState<boolean>(false);
   const [notesCount, setNotesCount] = useState<number>(0);
 
@@ -345,6 +351,30 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [fontFamily, setFontFamily] = useState('font-serif');
   const [fontSize, setFontSize] = useState<number>(18);
+
+  React.useEffect(() => {
+    if (renditionRef.current) {
+      const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      try { renditionRef.current.themes.select(isDark ? 'dark' : 'light'); } catch(e) {}
+    }
+  }, [theme]);
+
+  React.useEffect(() => {
+    if (renditionRef.current && renditionRef.current.book) {
+      try {
+        renditionRef.current.themes.fontSize(`${fontSize}px`);
+        const width = containerSize.width || window.innerWidth;
+        const height = containerSize.height || window.innerHeight;
+        const chars = Math.max(100, Math.floor((width * height) / (fontSize * fontSize * 1.5)));
+        renditionRef.current.book.locations.generate(chars).then(() => {
+          setEpubTotalPages(renditionRef.current.book.locations.length());
+          if (renditionRef.current.location) {
+             setEpubCurrentPage(renditionRef.current.location.start.location);
+          }
+        });
+      } catch(e) {}
+    }
+  }, [fontSize, containerSize.width, containerSize.height]);
   const [textAlign, setTextAlign] = useState('text-left');
   
   const [cropBorders, setCropBorders] = useState(false);
@@ -1346,7 +1376,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           onChange={(e) => {
                             setPageInputValue(e.target.value);
                             const val = parseInt(e.target.value);
-                            const maxPages = selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages.length;
+                            const maxPages = selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1);
                             if (!isNaN(val) && val >= 1 && val <= maxPages) {
                               setCurrentPage(val - 1);
                             }
@@ -1355,7 +1385,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           className="w-7 h-5 text-[10px] text-center bg-muted border-none p-0 focus-visible:ring-1 focus-visible:ring-primary rounded-none font-bold"
                         />
                         <span className="text-[9px] text-muted-foreground/60 font-mono">
-                          / {selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages.length}
+                          / {selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1)}
                         </span>
                       </div>
                       <Button 
@@ -1363,10 +1393,10 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                         size="icon" 
                         className="h-5 w-5 rounded-none hover:bg-muted" 
                         onClick={() => {
-                          const maxPages = selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages.length;
+                          const maxPages = selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1);
                           setCurrentPage(p => Math.min(maxPages - 1, p + 1));
                         }}
-                        disabled={currentPage === ((selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages.length) - 1)}
+                        disabled={selectedBook.fileType === 'epub' ? (epubCurrentPage >= epubTotalPages) : (currentPage === ((selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1) - 1))}
                       >
                         <ChevronRight className="w-3 h-3" />
                       </Button>
@@ -1402,9 +1432,27 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           <div className="p-4 text-xs text-center text-muted-foreground">PDF Loading...</div>
                         )}
                       </div>
-                    ) : selectedBook.fileType === 'epub' || selectedBook.fileType === 'text' ? (
-                      <div className="p-4 text-xs text-center text-muted-foreground">Table of Contents / Text Mode</div>
-                    ) : (
+                   ) : selectedBook.fileType === 'epub' ? (
+                        <div className="flex-1 overflow-y-auto no-scrollbar space-y-1">
+                          <div className="text-sm font-bold text-muted-foreground px-2 py-2 mb-2 sticky top-0 bg-background/95 backdrop-blur z-10 border-b">
+                            {t("tableOfContents") || "Table of Contents"}
+                          </div>
+                          {epubToc.map((item, idx) => (
+                            <div 
+                              key={idx}
+                              onClick={() => setLocation(item.href)}
+                              className="text-xs px-2 py-1.5 hover:bg-muted cursor-pointer rounded-md truncate transition-colors text-foreground"
+                            >
+                              {item.label}
+                            </div>
+                          ))}
+                          {epubToc.length === 0 && (
+                            <div className="p-4 text-xs text-center text-muted-foreground">No Table of Contents</div>
+                          )}
+                        </div>
+                      ) : selectedBook.fileType === 'text' ? (
+                        <div className="p-4 text-xs text-center text-muted-foreground">Text Mode</div>
+                      ) : (
                       selectedBook.pages.map((p, idx) => {
                         const isComicObj = typeof p === 'object' && p && (p.tree || p.panels);
                         const panels = extractAssetPanelsFromPage(p);
@@ -1493,8 +1541,14 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                       <ReactReader
                         url={selectedBook.fileBuffer || (selectedBook.file as any)}
                         location={location}
-                        locationChanged={(epubcition: string) => setLocation(epubcition)}
+                        locationChanged={(epubcition: string) => {
+                          setLocation(epubcition);
+                          if (renditionRef.current && renditionRef.current.location) {
+                            setEpubCurrentPage(renditionRef.current.location.start.location);
+                          }
+                        }}
                         showToc={false}
+                        tocChanged={(toc: any) => setEpubToc(toc)}
                         styles={{
                           ...ReactReaderStyle,
                           container: {
@@ -1525,25 +1579,38 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                         }}
                         swipeable={true}
                         getRendition={(rendition: any) => {
+                          renditionRef.current = rendition;
                           const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-                          rendition.themes.default({
-                            'html': {
-                              'background': 'transparent !important',
-                            },
-                            'body': { 
-                              'padding': '16px !important', 
-                              'margin': '0 !important',
-                              'background': 'transparent !important',
-                              'color': isDark ? '#f8fafc !important' : '#0f172a !important'
-                            },
-                            'p, span, div, h1, h2, h3, h4, h5, h6, a, li, blockquote': {
-                              'color': isDark ? '#f8fafc !important' : '#0f172a !important'
-                            },
-                            'img': {
-                              'max-width': '100% !important',
-                              'height': 'auto !important'
+                          
+                          rendition.themes.register('light', {
+                            'body': { 'background': 'transparent !important', 'color': '#0f172a !important' },
+                            'p, span, div, h1, h2, h3, h4, h5, h6, a, li, blockquote': { 'color': '#0f172a !important' },
+                            'img': { 'max-width': '100% !important', 'height': 'auto !important' }
+                          });
+                          rendition.themes.register('dark', {
+                            'body': { 'background': 'transparent !important', 'color': '#f8fafc !important' },
+                            'p, span, div, h1, h2, h3, h4, h5, h6, a, li, blockquote': { 'color': '#f8fafc !important' },
+                            'img': { 'max-width': '100% !important', 'height': 'auto !important' }
+                          });
+                          rendition.themes.select(isDark ? 'dark' : 'light');
+                          rendition.themes.fontSize(`${fontSize}px`);
+                          
+                          rendition.on('relocated', (location: any) => {
+                            if (rendition.book.locations.length()) {
+                              setEpubCurrentPage(location.start.location);
+                              setEpubTotalPages(rendition.book.locations.length());
                             }
                           });
+                          
+                          rendition.book.ready.then(() => {
+                            const width = containerSize.width || window.innerWidth;
+                            const height = containerSize.height || window.innerHeight;
+                            const chars = Math.max(100, Math.floor((width * height) / (fontSize * fontSize * 1.5)));
+                            rendition.book.locations.generate(chars).then(() => {
+                              setEpubTotalPages(rendition.book.locations.length());
+                            });
+                          });
+                          
                           rendition.on('click', (e: any) => {
                             const width = e.view ? e.view.innerWidth : window.innerWidth;
                             if (e.clientX > width / 2) {
@@ -1642,7 +1709,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                               <SplitPanelsIcon className="w-3 h-3 text-primary" />
                               <span>{currentPanelIndex + 1} / {panelsCache[currentPage].length}</span>
                               <span className="text-muted-foreground">•</span>
-                              <span className="text-muted-foreground">{t("page")} {currentPage + 1} / {selectedBook.pages.length}</span>
+                              <span className="text-muted-foreground">{t("page")} {selectedBook.fileType === 'epub' ? epubCurrentPage : currentPage + 1} / {selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : selectedBook.pages?.length || 1}</span>
                             </div>
                           )}
                         </div>

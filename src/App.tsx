@@ -238,6 +238,8 @@ function AppContent() {
           () => window.dispatchEvent(new CustomEvent("open-story-writer")),
           300,
         );
+      } else if (action === "open-settings") {
+        setShowSettingsDialog(true);
       }
     };
     window.addEventListener("app-navigation", handleNav);

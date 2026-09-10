@@ -62,31 +62,8 @@ export const FAQ: React.FC<FAQProps> = ({ navigate }) => {
     });
   }, [faqItems, activeCategory, searchQuery]);
 
-  // Schema.org FAQPage structured JSON-LD for Search Engines
-  const schemaJsonLd = useMemo(() => {
-    return {
-      "@context": "https://schema.org",
-      "@type": "FAQPage",
-      inLanguage: language,
-      mainEntity: faqItems.map((item) => ({
-        "@type": "Question",
-        name: item.question,
-        acceptedAnswer: {
-          "@type": "Answer",
-          text: item.answer,
-        },
-      })),
-    };
-  }, [faqItems, language]);
-
   return (
     <div className="flex-1 overflow-y-auto bg-background text-foreground antialiased selection:bg-primary/20">
-      {/* Inject Schema.org JSON-LD for Google Rich Results */}
-      <script
-        type="application/ld+json"
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(schemaJsonLd) }}
-      />
-
       <div className="max-w-5xl mx-auto px-4 py-8 sm:py-12 space-y-10">
         {/* Header Hero Banner */}
         <div className="text-center space-y-4 max-w-3xl mx-auto">

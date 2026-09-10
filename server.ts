@@ -86,7 +86,7 @@ function normalizeBlockText(text: string): string {
 
 async function startServer() {
   const app = express();
-  const PORT = parseInt(process.env.PORT || "3000", 10);
+  const PORT = 3000;
 
   app.use(cors({
     origin: '*',
@@ -322,26 +322,42 @@ async function startServer() {
     }
   }
 
-  async function callPollinations(messages: any[], initialModel = "openai", jsonMode = true, retries = 5): Promise<string> {
+  async function callPollinations(messages: any[], initialModel = "openai", jsonMode = true, retries = 3): Promise<string> {
     let lastError = null;
-    let currentJsonMode = jsonMode;
-    const fallbackModels = [initialModel, "gemini", "claude", "openai", "searchgpt"];
+    const fallbackModels = ["openai", "openai-fast", "gpt-oss"];
     
     for (let i = 0; i < retries; i++) {
       const model = fallbackModels[i % fallbackModels.length];
       try {
-        console.log(`[Pollinations] Attempt ${i + 1} with model "${model}" (jsonMode: ${currentJsonMode})`);
+        console.log(`[Pollinations] Attempt ${i + 1} with model "${model}"`);
         
-        const bodyObj: any = { messages, model };
-        if (currentJsonMode) {
-          bodyObj.jsonMode = true;
-        }
+        // Strip heavy base64 images from text models for reliability
+        const sanitizedMessages = messages.map((m: any) => {
+          if (Array.isArray(m.content)) {
+            const textParts = m.content
+              .filter((p: any) => p.type === 'text')
+              .map((p: any) => p.text)
+              .join(' ');
+            const hasImages = m.content.some((p: any) => p.type === 'image_url');
+            return {
+              role: m.role,
+              content: hasImages ? `${textParts} [Image attached]`.trim() : textParts
+            };
+          }
+          return m;
+        });
+
+        const bodyObj: any = { messages: sanitizedMessages, model };
+        // Note: Do NOT set jsonMode: true on Pollinations anonymous tier as it triggers 402 Payment Required
 
         const polRes = await fetch("https://text.pollinations.ai/", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+          },
           body: JSON.stringify(bodyObj),
-          signal: AbortSignal.timeout(35000)
+          signal: AbortSignal.timeout(20000)
         });
 
         if (polRes.ok) {
@@ -350,17 +366,36 @@ async function startServer() {
             return text;
           }
         }
+        
+        // If POST queue is full (429), try GET query
+        if (polRes.status === 429) {
+          const lastUserMsg = [...sanitizedMessages].reverse().find((m: any) => m.role === 'user');
+          const promptText = typeof lastUserMsg?.content === 'string' ? lastUserMsg.content : "analyze";
+          const sysMsg = sanitizedMessages.find((m: any) => m.role === 'system');
+          const sysText = typeof sysMsg?.content === 'string' ? sysMsg.content : "";
+          
+          try {
+            const query = sysText ? `${sysText} - ${promptText}` : promptText;
+            const getUrl = `https://text.pollinations.ai/${encodeURIComponent(query.slice(0, 400))}?model=openai`;
+            const getRes = await fetch(getUrl, {
+              headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36" },
+              signal: AbortSignal.timeout(15000)
+            });
+            if (getRes.ok) {
+              const text = await getRes.text();
+              if (text && text.trim() && !text.includes('"status":429') && !text.includes('"error":')) {
+                return text;
+              }
+            }
+          } catch {}
+        }
+        
         throw new Error(`Status ${polRes.status}`);
       } catch (e: any) {
         lastError = e;
         console.warn(`[Pollinations] Attempt ${i + 1} failed:`, e.message);
-        // Switch jsonMode to false for subsequent retries to maximize compatibility/success!
-        if (currentJsonMode) {
-          currentJsonMode = false;
-        }
         if (i < retries - 1) {
-          // Exponential-ish backoff
-          await new Promise(r => setTimeout(r, 2000 * (i + 1)));
+          await new Promise(r => setTimeout(r, 1500 * (i + 1)));
         }
       }
     }
@@ -2606,29 +2641,8 @@ STRICT INSTRUCTIONS:
           { role: "user", content: prompt }
         ];
         
-        let lastError = null;
-        const models = ["mistral", "llama", "openai"];
-        for (let i = 0; i < models.length; i++) {
-          try {
-            const polRes = await fetch("https://text.pollinations.ai/", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ messages: openAiMessages, model: models[i] })
-            });
-            if (polRes.ok) {
-              const text = await polRes.text();
-              return res.json({ text });
-            } else if (polRes.status === 429) {
-              lastError = new Error("Too Many Requests");
-              await new Promise(r => setTimeout(r, 2000 * (i + 1))); // Backoff
-            } else {
-              lastError = new Error(`Pollinations API Error: ${polRes.status}`);
-            }
-          } catch (e: any) {
-            lastError = e;
-          }
-        }
-        throw lastError || new Error("Failed to generate response from Pollinations");
+        const text = await callPollinations(openAiMessages, "openai", false, 3);
+        return res.json({ text });
       }
     } catch (err: any) {
       console.log("[API generate-text] Error:", err.message);
@@ -2731,13 +2745,17 @@ STRICT INSTRUCTIONS:
         openAiMessages.push({ role: "user", content });
 
         let lastError = null;
-        const models = ["qwen-coder", "openai", "llama"];
+        const models = ["openai", "openai-fast", "gpt-oss"];
         for (let i = 0; i < models.length; i++) {
           try {
             const polRes = await fetch("https://text.pollinations.ai/", {
               method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ messages: openAiMessages, model: models[i], jsonMode: true })
+              headers: {
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+              },
+              body: JSON.stringify({ messages: openAiMessages, model: models[i] }),
+              signal: AbortSignal.timeout(18000)
             });
             if (polRes.ok) {
               const text = await polRes.text();
@@ -2745,7 +2763,7 @@ STRICT INSTRUCTIONS:
               return res.json(parsed);
             } else if (polRes.status === 429) {
               lastError = new Error("Too Many Requests");
-              await new Promise(r => setTimeout(r, 2000 * (i + 1))); // Backoff
+              await new Promise(r => setTimeout(r, 1500 * (i + 1))); // Backoff
             } else {
               lastError = new Error(`Pollinations API Error: ${polRes.status}`);
             }
@@ -2927,7 +2945,7 @@ STRICT INSTRUCTIONS:
 
   if (process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
-    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
+    const vite = await createViteServer({ server: { middlewareMode: true }, appType: "custom" });
     app.use(vite.middlewares);
     
     // SPA catch-all route for development mode with dynamic SEO injection & 301 redirects

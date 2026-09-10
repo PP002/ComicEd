@@ -4,8 +4,20 @@ import App from './App';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import './index.css';
 
-// Intercept benign cross-origin "Script error." in iframe environments
+// Intercept benign cross-origin "Script error." and React script tag warnings in iframe environments
 if (typeof window !== 'undefined') {
+  const originalConsoleError = console.error;
+  console.error = (...args: any[]) => {
+    const msg = typeof args[0] === 'string' ? args[0] : String(args[0]?.message || '');
+    if (
+      msg.includes('Encountered a script tag while rendering React component') ||
+      msg.includes('Script error.')
+    ) {
+      return;
+    }
+    originalConsoleError.apply(console, args);
+  };
+
   window.addEventListener('error', (event) => {
     if (event.message === 'Script error.' || (!event.message && !event.filename)) {
       event.preventDefault();

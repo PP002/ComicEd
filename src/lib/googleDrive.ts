@@ -96,16 +96,7 @@ export const initGoogleDriveAuth = (
     const token = await getDriveAccessToken();
     if (user && token) {
       if (onAuthSuccess) onAuthSuccess(user, token);
-    } else if (user && !token && !isSigningIn) {
-      // Try silent retrieval
-      const silentToken = await requestGoogleDriveTokenSilently(user.email || undefined);
-      if (silentToken && onAuthSuccess) {
-        onAuthSuccess(user, silentToken);
-      } else if (onAuthFailure) {
-        onAuthFailure();
-      }
-    } else if (!user) {
-      cachedAccessToken = null;
+    } else {
       if (onAuthFailure) onAuthFailure();
     }
   });

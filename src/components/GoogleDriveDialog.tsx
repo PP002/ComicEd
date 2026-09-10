@@ -23,7 +23,6 @@ import {
   signOutGoogleDrive,
   getDriveAccessToken,
   getCurrentDriveUser,
-  requestGoogleDriveTokenSilently,
   listDriveFiles,
   listDriveFolders,
   createDriveFolder,
@@ -160,20 +159,8 @@ export function GoogleDriveDialog({
   }, [open, initialMode, exportFile]);
 
   const checkAuthStatus = async () => {
-    let token = await getDriveAccessToken();
-    let driveUser = getCurrentDriveUser();
-
-    // If already signed in with a Google account in the app, attempt silent auto-connection
-    if (!token && isGoogleUser) {
-      setIsAuthenticating(true);
-      try {
-        token = await requestGoogleDriveTokenSilently(appUser?.email || driveUser?.email || undefined);
-      } catch (err) {
-        console.warn('[GoogleDrive] Auto-connect attempt:', err);
-      } finally {
-        setIsAuthenticating(false);
-      }
-    }
+    const token = await getDriveAccessToken();
+    const driveUser = getCurrentDriveUser();
 
     if (token) {
       setIsAuthenticated(true);

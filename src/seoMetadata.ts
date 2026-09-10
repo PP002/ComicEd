@@ -344,10 +344,7 @@ export function resolveSEORoute(pathname: string): RouteResolution {
       view = sub;
     }
     const canonicalPath = view === "home" ? `/${matchedLang.code}` : `/${matchedLang.code}/${view}`;
-    
-    // Check if casing was wrong (e.g. /KO/faq or trailing slash)
-    const normalizedInput = cleanPath.endsWith("/") && cleanPath.length > 1 ? cleanPath.slice(0, -1) : cleanPath;
-    const shouldRedirect = cleanPath !== canonicalPath && cleanPath !== `/${matchedLang.code}/${view}` && normalizedInput !== canonicalPath;
+    const shouldRedirect = cleanPath !== canonicalPath;
 
     return {
       lang: matchedLang.code,
@@ -364,7 +361,7 @@ export function resolveSEORoute(pathname: string): RouteResolution {
     view = firstLower;
   }
   const canonicalPath = view === "home" ? "/" : `/${view}`;
-  const shouldRedirect = cleanPath.endsWith("/") && cleanPath.length > 1;
+  const shouldRedirect = cleanPath !== canonicalPath;
 
   return {
     lang: "en",
@@ -555,10 +552,17 @@ export function injectSEOMetadata(htmlTemplate: string, pathname: string): { htm
   // 3. Inject new SEO head block right after <head>
   modifiedHtml = modifiedHtml.replace(/<head>/i, `<head>\n${seoHeadBlock}`);
 
+  // 4. Inject rich, accessible, semantic SSR snapshot inside <div id="root"> to prevent Soft 404
+  const prerenderedBody = generatePrerenderedHTML(lang, view);
+  modifiedHtml = modifiedHtml.replace(
+    /<div\s+id=["']root["'][^>]*>[\s\S]*?<\/div>/i,
+    `<div id="root">${prerenderedBody}</div>`
+  );
+
   return { html: modifiedHtml, resolution };
 }
 
-function escapeHtml(str: string): string {
+export function escapeHtml(str: string): string {
   return str
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
@@ -566,3 +570,351 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;");
 }
+
+/**
+ * Generates rich semantic HTML snapshot for search engine crawlers and instant first contentful paint.
+ * Solves "Soft 404" errors by ensuring Googlebot always sees relevant, indexable text matching the URL.
+ */
+export function generatePrerenderedHTML(lang: SupportedLanguage, view: ViewRoute): string {
+  const homeUrl = lang === "en" ? "/" : `/${lang}`;
+  const readUrl = lang === "en" ? "/read" : `/${lang}/read`;
+  const createUrl = lang === "en" ? "/create" : `/${lang}/create`;
+  const convertUrl = lang === "en" ? "/convert" : `/${lang}/convert`;
+  const faqUrl = lang === "en" ? "/faq" : `/${lang}/faq`;
+
+  const navLabels: Record<SupportedLanguage, { home: string; read: string; create: string; convert: string; faq: string; tag: string }> = {
+    en: { home: "Home", read: "Manga & Book Reader", create: "Comic & Novel Creator", convert: "E-book Converter", faq: "FAQ & Help", tag: "All-in-One Comic & E-book Suite" },
+    ko: { home: "홈", read: "만화 리더", create: "만화 & 소설 제작", convert: "전자책 변환기", faq: "자주 묻는 질문", tag: "만화 제작 & 전자책 변환 스튜디오" },
+    ja: { home: "ホーム", read: "マンガリーダー", create: "マンガ・小説制作", convert: "電子書籍変換", faq: "よくある質問", tag: "電子書籍＆マンガスイート" },
+    "zh-hans": { home: "首页", read: "漫画阅读器", create: "漫画与小说创作", convert: "电子书转换器", faq: "常见问题", tag: "电子书与漫画创作平台" },
+    "zh-hant": { home: "首頁", read: "漫畫閱讀器", create: "漫畫與小說創作", convert: "電子書轉換器", faq: "常見問題", tag: "電子書與漫畫創作平台" },
+    fr: { home: "Accueil", read: "Lecteur BD", create: "Créateur BD & Roman", convert: "Convertisseur", faq: "FAQ & Aide", tag: "Suite BD & E-books en Ligne" },
+    es: { home: "Inicio", read: "Lector Cómic", create: "Creador Cómic", convert: "Conversor", faq: "Preguntas Frecuentes", tag: "Suite de Cómics y E-books" },
+    pt: { home: "Início", read: "Leitor", create: "Criador de Quadrinhos", convert: "Conversor", faq: "Perguntas Frecuentes", tag: "Suíte de E-books e Mangás" },
+    de: { home: "Startseite", read: "Comic Reader", create: "Comic Studio", convert: "E-Book Konverter", faq: "FAQ & Hilfe", tag: "E-Book & Comic Suite" },
+    ar: { home: "الرئيسية", read: "قارئ المانجا", create: "استوديو القصص المصورة", convert: "محول الكتب", faq: "الأسئلة الشائعة", tag: "منصة الكتب والمانجا" },
+    ru: { home: "Главная", read: "Читалка манги", create: "Студия комиксов", convert: "Конвертер", faq: "FAQ", tag: "Студия комиксов и электронных книг" },
+    it: { home: "Home", read: "Lettore Manga", create: "Crea Fumetti", convert: "Convertitore", faq: "Domande Frequenti", tag: "Suite Fumetti ed E-book" },
+  };
+
+  const nav = navLabels[lang] || navLabels.en;
+  const pageTitle = SEO_TITLES[lang]?.[view] || SEO_TITLES.en[view];
+  const pageDesc = SEO_DESCRIPTIONS[lang]?.[view] || SEO_DESCRIPTIONS.en[view];
+
+  let mainBody = "";
+
+  if (view === "create") {
+    if (lang === "ko") {
+      mainBody = `
+        <article class="seo-article">
+          <nav aria-label="Breadcrumb" class="seo-breadcrumb">
+            <a href="${homeUrl}">${nav.home}</a> &gt; <span>${nav.create}</span>
+          </nav>
+          <h1>무료 온라인 만화 제작 &amp; 소설 편집기 | EBookCC</h1>
+          <p class="seo-lead">${escapeHtml(pageDesc)}</p>
+
+          <section class="seo-section">
+            <h2>핵심 제작 기능 및 창작 도구</h2>
+            <div class="seo-grid">
+              <div class="seo-card">
+                <h3>🎨 맞춤형 만화 컷 레이아웃 빌더 (Comic Panel Builder)</h3>
+                <p>2x2, 1x3, 4컷 만화(4koma), 웹툰 세로 스크롤 레이아웃 및 컷 크기/간격을 자유롭게 조절할 수 있습니다. 템플릿을 선택하거나 빈 캔버스에서 나만의 만화를 그려보세요.</p>
+              </div>
+              <div class="seo-card">
+                <h3>💬 스마트 말풍선 &amp; 대사 엔진 (Speech Bubble Engine)</h3>
+                <p>대화, 생각, 외침 등 다양한 스타일의 말풍선 배치와 꼬리 회전, 폰트 및 배경색 커스터마이징을 지원합니다. 가로쓰기와 세로쓰기 대사 입력이 모두 가능합니다.</p>
+              </div>
+              <div class="seo-card">
+                <h3>🌐 AI 만화 번역 &amp; 스마트 OCR (AI Comic Translation)</h3>
+                <p>외국어 원본 만화 이미지 속 대사를 자동 스캔하여 깨끗하게 제거(인페인팅)하고 자연스러운 한국어 대사로 즉시 번역하여 채워 넣습니다.</p>
+              </div>
+              <div class="seo-card">
+                <h3>✍️ 소설 &amp; 웹소설 작성 스튜디오 (Novel &amp; Story Editor)</h3>
+                <p>챕터별 구성, 서식 지정, 자동 들여쓰기, 실시간 단어수 측정 및 집중 집필 모드를 제공합니다. 삽화 일러스트와 텍스트를 함께 배치할 수 있습니다.</p>
+              </div>
+              <div class="seo-card">
+                <h3>📱 킨들 및 표준 전자책 내보내기 (Kindle &amp; EPUB Export)</h3>
+                <p>Amazon Send to Kindle 규격을 완벽 준수하는 표준 EPUB3 파일과 고해상도 PDF, CBZ 이미지 압축 파일을 원클릭으로 무료 생성합니다.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="seo-section">
+            <h2>만화 및 전자책 제작 가이드 (4단계)</h2>
+            <ol class="seo-steps">
+              <li><strong>1단계: 템플릿 선택:</strong> 단일 컷, 4컷 만화, 웹툰 스크롤 또는 빈 캔버스 중 원하는 형식을 선택합니다.</li>
+              <li><strong>2단계: 아트워크 삽입 및 드로잉:</strong> 로컬 이미지 파일을 드래그앤드롭하거나 브러시 도구로 스케치합니다.</li>
+              <li><strong>3단계: 말풍선 배치 및 대사 입력:</strong> 캐릭터 위치에 맞추어 말풍선을 추가하고 글꼴과 효과를 지정합니다.</li>
+              <li><strong>4단계: 전자책 다운로드:</strong> 킨들용 EPUB, 고화질 PDF 또는 CBZ 포맷으로 즉시 저장합니다.</li>
+            </ol>
+          </section>
+
+          <section class="seo-section">
+            <h2>지원 파일 형식 (Formats)</h2>
+            <p><strong>가져오기 (Import):</strong> PNG, JPG, JPEG, WEBP, GIF, SVG, TXT, DOCX, CBZ, CBR, PDF</p>
+            <p><strong>내보내기 (Export):</strong> 표준 EPUB3 (Kindle 최적화), 인쇄용 고해상도 PDF, CBZ (만화 압축), ZIP</p>
+          </section>
+
+          <section class="seo-section">
+            <h2>자주 묻는 질문 (FAQ)</h2>
+            <div class="seo-faq-item">
+              <h3>Q: EBookCC 만화 제작기는 무료인가요?</h3>
+              <p>A: 네, EBookCC의 모든 만화 컷 제작, 말풍선 편집, 소설 작성 및 EPUB 내보내기 기능은 100% 무료이며 별도의 설치 없이 브라우저에서 바로 사용할 수 있습니다.</p>
+            </div>
+            <div class="seo-faq-item">
+              <h3>Q: 킨들(Kindle)에서 바로 읽을 수 있는 파일로 저장되나요?</h3>
+              <p>A: 네, 생성된 EPUB 파일은 Amazon Send to Kindle 및 전자책 단말기 표준 사양을 완벽히 충족합니다.</p>
+            </div>
+            <div class="seo-faq-item">
+              <h3>Q: 작업 중인 데이터는 안전하게 보관되나요?</h3>
+              <p>A: 모든 데이터는 브라우저 로컬 저장소 및 사용자의 Google Drive 클라우드 백업을 통해 안전하게 보관됩니다.</p>
+            </div>
+          </section>
+        </article>
+      `;
+    } else {
+      mainBody = `
+        <article class="seo-article">
+          <nav aria-label="Breadcrumb" class="seo-breadcrumb">
+            <a href="${homeUrl}">${nav.home}</a> &gt; <span>${nav.create}</span>
+          </nav>
+          <h1>${escapeHtml(pageTitle)}</h1>
+          <p class="seo-lead">${escapeHtml(pageDesc)}</p>
+
+          <section class="seo-section">
+            <h2>Core Comic &amp; Novel Creation Features</h2>
+            <div class="seo-grid">
+              <div class="seo-card">
+                <h3>🎨 Comic &amp; Manga Panel Layout Builder</h3>
+                <p>Create custom grids, 4koma strips, and vertical webtoon formats. Adjust panel borders, spacing, and canvas sizes with intuitive drag-and-drop tools.</p>
+              </div>
+              <div class="seo-card">
+                <h3>💬 Smart Speech Bubble Engine</h3>
+                <p>Insert speech, thought, shout, and whisper bubbles. Fully customize tail directions, font families, typography, and background fills.</p>
+              </div>
+              <div class="seo-card">
+                <h3>🌐 AI Comic Translation &amp; OCR Inpainting</h3>
+                <p>Automatically detect dialogue text in foreign manga panels, erase original text with seamless inpainting, and replace it with accurate translations.</p>
+              </div>
+              <div class="seo-card">
+                <h3>✍️ Rich Text Novel &amp; Story Studio</h3>
+                <p>Organize chapters, format prose, track word counts, and combine narrative text with comic illustrations in a distraction-free writing environment.</p>
+              </div>
+              <div class="seo-card">
+                <h3>📱 Kindle &amp; Standard EPUB Export</h3>
+                <p>Export your finished comics, manga, and novels into Amazon Send-to-Kindle compliant EPUB3, high-definition PDF, and CBZ archives.</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="seo-section">
+            <h2>How to Create Comics &amp; E-books Online</h2>
+            <ol class="seo-steps">
+              <li><strong>Step 1: Choose Layout:</strong> Pick a panel template, webtoon strip, or start with a custom blank canvas.</li>
+              <li><strong>Step 2: Add Artwork &amp; Draw:</strong> Upload illustrations or sketch directly using responsive drawing tools.</li>
+              <li><strong>Step 3: Add Speech Bubbles:</strong> Position bubbles and type your dialogue with custom fonts and tail pointers.</li>
+              <li><strong>Step 4: Export to EPUB:</strong> Download your finished book in EPUB3, PDF, or CBZ format for Kindle and e-readers.</li>
+            </ol>
+          </section>
+
+          <section class="seo-section">
+            <h2>Supported Specifications &amp; Formats</h2>
+            <p><strong>Input:</strong> PNG, JPG, WEBP, GIF, SVG, TXT, DOCX, CBZ, CBR, PDF</p>
+            <p><strong>Export:</strong> Standard EPUB3 (Kindle optimized), Print-Ready PDF, CBZ, ZIP</p>
+          </section>
+        </article>
+      `;
+    }
+  } else if (view === "read") {
+    mainBody = `
+      <article class="seo-article">
+        <nav aria-label="Breadcrumb" class="seo-breadcrumb">
+          <a href="${homeUrl}">${nav.home}</a> &gt; <span>${nav.read}</span>
+        </nav>
+        <h1>${escapeHtml(pageTitle)}</h1>
+        <p class="seo-lead">${escapeHtml(pageDesc)}</p>
+
+        <section class="seo-section">
+          <h2>${lang === "ko" ? "온라인 독서 및 리더 기능" : "Reading & Viewing Features"}</h2>
+          <div class="seo-grid">
+            <div class="seo-card">
+              <h3>📖 ${lang === "ko" ? "컷별 스마트 가이드 뷰 (Guided View)" : "Panel-by-Panel Guided View"}</h3>
+              <p>${lang === "ko" ? "만화 컷을 자동으로 감지하여 패널 단위로 확대 감상할 수 있어 모바일 화면에서도 편리합니다." : "Automatically detect panels and zoom frame-by-frame for an immersive comic reading experience."}</p>
+            </div>
+            <div class="seo-card">
+              <h3>🔄 ${lang === "ko" ? "만화 읽기 방향 전환 (RTL/LTR)" : "Reading Direction (RTL / LTR)"}</h3>
+              <p>${lang === "ko" ? "일본 만화(우측에서 좌측) 및 서양 그래픽 노블(좌측에서 우측) 읽기 방식을 자유롭게 전환할 수 있습니다." : "Switch seamlessly between Manga Right-to-Left (RTL) and Western Left-to-Right (LTR) reading modes."}</p>
+            </div>
+            <div class="seo-card">
+              <h3>🌙 ${lang === "ko" ? "다크 모드 &amp; 고화질 렌더링" : "Dark Mode &amp; High-Res Zoom"}</h3>
+              <p>${lang === "ko" ? "야간 독서를 위한 다크 테마 및 벡터 수준의 선명한 텍스트 렌더링을 제공합니다." : "Comfortable night reading with dark mode, full-screen view, and crisp text rendering."}</p>
+            </div>
+            <div class="seo-card">
+              <h3>📚 ${lang === "ko" ? "개인 서재 &amp; 클라우드 연동" : "Personal Bookshelf &amp; Cloud"}</h3>
+              <p>${lang === "ko" ? "최근 읽은 책의 진행률을 자동 저장하며 Google Drive 클라우드에서 바로 도서를 불러올 수 있습니다." : "Automatically tracks your reading progress and syncs with your personal Google Drive library."}</p>
+            </div>
+          </div>
+        </section>
+      </article>
+    `;
+  } else if (view === "convert") {
+    mainBody = `
+      <article class="seo-article">
+        <nav aria-label="Breadcrumb" class="seo-breadcrumb">
+          <a href="${homeUrl}">${nav.home}</a> &gt; <span>${nav.convert}</span>
+        </nav>
+        <h1>${escapeHtml(pageTitle)}</h1>
+        <p class="seo-lead">${escapeHtml(pageDesc)}</p>
+
+        <section class="seo-section">
+          <h2>${lang === "ko" ? "전자책 변환 핵심 기능" : "Universal Conversion Features"}</h2>
+          <div class="seo-grid">
+            <div class="seo-card">
+              <h3>🔄 ${lang === "ko" ? "무손실 전자책 변환 (CBZ, CBR, PDF to EPUB)" : "Lossless Conversion (CBZ, CBR, PDF to EPUB)"}</h3>
+              <p>${lang === "ko" ? "만화 압축 파일과 문서를 킨들 및 전자책 단말기에 최적화된 표준 EPUB3 포맷으로 고속 변환합니다." : "Convert comic archives and documents into Kindle-optimized EPUB3 files with lossless image quality."}</p>
+            </div>
+            <div class="seo-card">
+              <h3>✂️ ${lang === "ko" ? "스마트 컷 분할 및 여백 자동 크롭" : "Smart Panel Splitting &amp; Crop"}</h3>
+              <p>${lang === "ko" ? "이중 펼침면 자동 분할과 공백 여백 제거로 전자책 단말기 화면을 100% 채워 감상할 수 있습니다." : "Automatically split double-page spreads and crop white borders to maximize screen readability."}</p>
+            </div>
+            <div class="seo-card">
+              <h3>⚡ ${lang === "ko" ? "킨들 화면 비율 최적화" : "Kindle Screen Optimization"}</h3>
+              <p>${lang === "ko" ? "Kindle Paperwhite, Oasis, Scribe 등 기기별 해상도에 맞추어 파일 용량과 가독성을 최적화합니다." : "Tailored resolution and compression for Kindle Paperwhite, Oasis, Scribe, and standard e-readers."}</p>
+            </div>
+            <div class="seo-card">
+              <h3>🔤 ${lang === "ko" ? "AI OCR 텍스트 레이어 생성" : "AI OCR Text Layer Generation"}</h3>
+              <p>${lang === "ko" ? "스캔 이미지 속 문자를 디지털 텍스트 레이어로 추출하여 검색과 번역이 가능한 전자책으로 업그레이드합니다." : "Extract text layers from scanned pages to make your e-books searchable and translatable."}</p>
+            </div>
+          </div>
+        </section>
+      </article>
+    `;
+  } else if (view === "faq") {
+    mainBody = `
+      <article class="seo-article">
+        <nav aria-label="Breadcrumb" class="seo-breadcrumb">
+          <a href="${homeUrl}">${nav.home}</a> &gt; <span>${nav.faq}</span>
+        </nav>
+        <h1>${escapeHtml(pageTitle)}</h1>
+        <p class="seo-lead">${escapeHtml(pageDesc)}</p>
+
+        <section class="seo-section">
+          <h2>${lang === "ko" ? "자주 묻는 질문" : "Frequently Asked Questions"}</h2>
+          <div class="seo-faq-item">
+            <h3>${lang === "ko" ? "EBookCC는 완전 무료인가요?" : "Is EBookCC completely free?"}</h3>
+            <p>${lang === "ko" ? "네! 만화 제작, 리더, 전자책 변환, AI 만화 번역 등 모든 도구를 무료로 제한 없이 이용하실 수 있습니다." : "Yes! All tools including comic creation, book reader, converter, and AI translation are 100% free."}</p>
+          </div>
+          <div class="seo-faq-item">
+            <h3>${lang === "ko" ? "만든 만화를 킨들(Kindle)에서 볼 수 있나요?" : "Can I read my created comics on Kindle?"}</h3>
+            <p>${lang === "ko" ? "네, 내보내기 시 'EPUB' 형식을 선택하면 Amazon Send to Kindle 및 킨들 기기에서 바로 완벽하게 작동합니다." : "Yes, selecting EPUB export produces files fully compatible with Amazon Send to Kindle and Kindle e-readers."}</p>
+          </div>
+          <div class="seo-faq-item">
+            <h3>${lang === "ko" ? "개인정보와 업로드한 파일은 안전한가요?" : "Are my files and personal privacy secure?"}</h3>
+            <p>${lang === "ko" ? "EBookCC는 오프라인 로컬 처리를 지향하며, 사용자의 동의 없이 파일을 외부에 보관하지 않습니다." : "EBookCC prioritizes local-first browser processing and never stores your personal files on external servers without consent."}</p>
+          </div>
+        </section>
+      </article>
+    `;
+  } else {
+    // view === "home"
+    mainBody = `
+      <article class="seo-article">
+        <h1>${escapeHtml(pageTitle)}</h1>
+        <p class="seo-lead">${escapeHtml(pageDesc)}</p>
+
+        <section class="seo-section">
+          <h2>${lang === "ko" ? "EBookCC 주요 기능 바로가기" : "Explore EBookCC Suite"}</h2>
+          <div class="seo-grid">
+            <div class="seo-card">
+              <h3><a href="${readUrl}">📖 ${nav.read}</a></h3>
+              <p>${lang === "ko" ? "컷별 안내 뷰, 다크 모드, 고해상도 확대를 지원하는 온라인 만화 리더." : "Read comics, manga, EPUBs, and PDFs online with panel-by-panel guided view and dark mode."}</p>
+            </div>
+            <div class="seo-card">
+              <h3><a href="${createUrl}">🎨 ${nav.create}</a></h3>
+              <p>${lang === "ko" ? "다양한 만화 컷 레이아웃 구성, 말풍선 삽입, 드로잉 및 AI 소설 작성 스튜디오." : "Design custom comic panels, speech bubbles, draw illustrations, and write novels with AI assistance."}</p>
+            </div>
+            <div class="seo-card">
+              <h3><a href="${convertUrl}">🔄 ${nav.convert}</a></h3>
+              <p>${lang === "ko" ? "CBZ, CBR, PDF, EPUB 일괄 변환, 자동 OCR 스캔 및 스마트 패널 분할." : "Convert CBZ, CBR, PDF files into Kindle-optimized EPUB e-books with smart panel splitting."}</p>
+            </div>
+            <div class="seo-card">
+              <h3><a href="${faqUrl}">❓ ${nav.faq}</a></h3>
+              <p>${lang === "ko" ? "만화 번역, 패널 분할, 킨들 변환 등에 대한 자주 묻는 질문과 답변." : "Frequently asked questions and guides about comic creation, AI translation, and e-book conversion."}</p>
+            </div>
+          </div>
+        </section>
+      </article>
+    `;
+  }
+
+  // Language switcher links for Google crawler discovery
+  const langLinks = SEO_LANGUAGES.map(
+    (l) => `<a href="${l.code === "en" ? (view === "home" ? "/" : `/${view}`) : `/${l.code}${view === "home" ? "" : `/${view}`}`}">${escapeHtml(l.nativeName)}</a>`
+  ).join(" | ");
+
+  return `
+    <style id="ebookcc-ssr-styles">
+      .seo-wrapper { max-width: 1100px; margin: 0 auto; padding: 24px 20px 60px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; color: #1e293b; line-height: 1.6; }
+      .seo-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 16px; margin-bottom: 32px; flex-wrap: wrap; gap: 12px; }
+      .seo-brand { font-size: 22px; font-weight: 800; color: #0f172a; text-decoration: none; display: flex; align-items: center; gap: 8px; }
+      .seo-brand-tag { font-size: 11px; font-weight: 600; background: #e0e7ff; color: #4338ca; padding: 2px 8px; border-radius: 9999px; }
+      .seo-nav { display: flex; gap: 16px; flex-wrap: wrap; }
+      .seo-nav a { text-decoration: none; color: #475569; font-weight: 600; font-size: 14px; }
+      .seo-nav a:hover { color: #0284c7; }
+      .seo-breadcrumb { font-size: 13px; color: #64748b; margin-bottom: 16px; }
+      .seo-breadcrumb a { color: #0284c7; text-decoration: none; }
+      .seo-article h1 { font-size: 28px; font-weight: 800; color: #0f172a; line-height: 1.3; margin-bottom: 12px; }
+      .seo-lead { font-size: 16px; color: #475569; margin-bottom: 32px; line-height: 1.7; }
+      .seo-section { margin-bottom: 40px; }
+      .seo-section h2 { font-size: 20px; font-weight: 700; color: #0f172a; margin-bottom: 16px; border-bottom: 2px solid #f1f5f9; padding-bottom: 8px; }
+      .seo-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+      .seo-card { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 18px; }
+      .seo-card h3 { font-size: 16px; font-weight: 700; color: #1e293b; margin-top: 0; margin-bottom: 8px; }
+      .seo-card p { font-size: 14px; color: #64748b; margin: 0; line-height: 1.6; }
+      .seo-steps { padding-left: 20px; font-size: 15px; color: #334155; line-height: 1.8; }
+      .seo-faq-item { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px 18px; margin-bottom: 12px; }
+      .seo-faq-item h3 { font-size: 15px; font-weight: 700; color: #0f172a; margin: 0 0 6px 0; }
+      .seo-faq-item p { font-size: 14px; color: #475569; margin: 0; }
+      .seo-footer { border-top: 1px solid #e2e8f0; padding-top: 24px; margin-top: 48px; font-size: 12px; color: #94a3b8; text-align: center; }
+      .seo-lang-links { margin-top: 10px; line-height: 2; }
+      .seo-lang-links a { color: #64748b; text-decoration: none; margin: 0 4px; }
+      .seo-lang-links a:hover { text-decoration: underline; }
+      @media (prefers-color-scheme: dark) {
+        .seo-wrapper { color: #cbd5e1; }
+        .seo-brand { color: #f8fafc; }
+        .seo-article h1, .seo-section h2, .seo-card h3, .seo-faq-item h3 { color: #f1f5f9; }
+        .seo-lead, .seo-card p, .seo-faq-item p { color: #94a3b8; }
+        .seo-card, .seo-faq-item { background: #1e293b; border-color: #334155; }
+        .seo-header, .seo-footer { border-color: #334155; }
+        .seo-section h2 { border-color: #334155; }
+      }
+    </style>
+    <div class="seo-wrapper">
+      <header class="seo-header">
+        <a href="${homeUrl}" class="seo-brand">
+          <span>EBookCC</span>
+          <span class="seo-brand-tag">${escapeHtml(nav.tag)}</span>
+        </a>
+        <nav class="seo-nav">
+          <a href="${homeUrl}">${escapeHtml(nav.home)}</a>
+          <a href="${readUrl}">${escapeHtml(nav.read)}</a>
+          <a href="${createUrl}">${escapeHtml(nav.create)}</a>
+          <a href="${convertUrl}">${escapeHtml(nav.convert)}</a>
+          <a href="${faqUrl}">${escapeHtml(nav.faq)}</a>
+        </nav>
+      </header>
+
+      <main>
+        ${mainBody}
+      </main>
+
+      <footer class="seo-footer">
+        <p>&copy; 2026 EBookCC. Free Online Comic &amp; Manga Creation, AI Translation, and E-book Converter.</p>
+        <div class="seo-lang-links">
+          ${langLinks}
+        </div>
+      </footer>
+    </div>
+  `;
+}
+

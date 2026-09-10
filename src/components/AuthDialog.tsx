@@ -6,7 +6,7 @@ import { Loader2, Mail, Lock, User, LogIn, UserPlus, Shield, BookOpen, Sparkles 
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 import { GoogleLogin } from '@react-oauth/google';
-import { signInWithGoogleDrive, requestGoogleDriveTokenSilently } from '@/lib/googleDrive';
+import { signInWithGoogleDrive } from '@/lib/googleDrive';
 
 import { useLanguage } from '@/context/LanguageContext';
 
@@ -347,8 +347,6 @@ export function AuthDialog({ open, onOpenChange }: AuthDialogProps) {
           avatarUrl: sessionData.session.user.user_metadata?.avatar_url,
           authProvider: 'google',
         });
-        // Silently request Google Drive token for the Google user so Drive is ready immediately
-        requestGoogleDriveTokenSilently(sessionData.session.user.email || undefined).catch(() => {});
         toast.success("Successfully signed in with Google!");
         onOpenChange(false);
       }
