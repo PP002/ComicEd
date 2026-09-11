@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef } from 'react';
 import { cn } from '@/lib/utils';
 import { useAppSettings } from '@/context/AppSettingsContext';
 import { fetchPublishedWorksFromR2, deletePublishedWorkFromR2 } from '@/lib/r2Storage';
@@ -104,9 +104,9 @@ function MetroBookTile({
     
     if (!clean) {
       return [
-        'A creative story authored in eBookCC.',
-        `Written by ${book.author || 'Author'} • Tap to read`,
-        'Published novel work in library.'
+        'A creative story authored in eBookCC. Open the book to immerse yourself in the full narrative.',
+        `Written by ${book.author || 'Author'}. Turn the pages to explore chapters and dialogue.`,
+        'Published literary work in the community bookshelf library.'
       ];
     }
 
@@ -115,11 +115,27 @@ function MetroBookTile({
       const chunks: string[] = [];
       let cur = "";
       for (const s of sentences) {
-        if ((cur + " " + s).length > 85) {
+        if ((cur + " " + s).length > 180) {
           if (cur.trim()) chunks.push(cur.trim());
-          cur = s;
+          cur = s.trim();
         } else {
-          cur += " " + s;
+          cur += (cur ? " " : "") + s.trim();
+        }
+      }
+      if (cur.trim()) chunks.push(cur.trim());
+      if (chunks.length > 1) return chunks;
+    }
+
+    if (clean.length > 120) {
+      const words = clean.split(/\s+/);
+      const chunks: string[] = [];
+      let cur = "";
+      for (const w of words) {
+        if ((cur + " " + w).length > 180) {
+          if (cur.trim()) chunks.push(cur.trim());
+          cur = w;
+        } else {
+          cur += (cur ? " " : "") + w;
         }
       }
       if (cur.trim()) chunks.push(cur.trim());
@@ -129,7 +145,7 @@ function MetroBookTile({
     return [
       `"${clean}"`,
       `Story by ${book.author || 'Unknown'} • Tap to read full novel`,
-      `Excerpt: ${clean.length > 50 ? clean.slice(0, 50) + '...' : clean}`
+      clean.length > 60 ? clean.slice(0, 60) + '...' : clean
     ];
   }, [book]);
 
@@ -189,7 +205,7 @@ function MetroBookTile({
       className="flex-shrink-0 w-[180px] group flex flex-col cursor-pointer select-none"
     >
       {/* BOOK PREVIEW CONTAINER */}
-      <div className="relative w-full h-[240px] flex flex-col justify-between bg-card text-card-foreground border border-border/80 rounded-md shadow-md overflow-hidden transition-all duration-300 group-hover:shadow-xl group-hover:border-primary/60 group-active:scale-95">
+      <div className="relative w-full h-[240px] flex flex-col justify-between bg-card text-card-foreground border border-border/80 rounded-md shadow-none overflow-hidden transition-all duration-300 group-hover:border-primary/60 group-active:scale-95">
         {/* BACKGROUND & METRO LIVE TILE CONTENT */}
         {book.type === 'comic' ? (
           // COMIC METRO LIVE TILE: Display ENTIRE Page Layout in 3:4 aspect ratio box
@@ -222,40 +238,47 @@ function MetroBookTile({
                 )}
               </motion.div>
             </AnimatePresence>
-            {/* Metro Gradient Overlay */}
-            <div className="absolute inset-0 bg-gradient-to-t from-card/80 via-transparent to-transparent pointer-events-none" />
           </div>
         ) : (
-          // NOVEL METRO LIVE TILE: Clean surface or background image without blue vertical line
+          // NOVEL METRO LIVE TILE: Novel slide show fills the ENTIRE page (not a small card)
           <div className="absolute inset-0 bg-card overflow-hidden">
-            {novelBgImage ? (
-              <>
-                <AnimatePresence mode="popLayout" initial={false}>
-                  <motion.img
-                    key={`novel-bg-${slideIndex}`}
-                    src={novelBgImage || undefined}
-                    alt={book.title}
-                    initial={currentDirection.initial}
-                    animate={{ x: "0%", y: "0%", opacity: 0.35 }}
-                    exit={currentDirection.exit}
-                    transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
-                    className="absolute inset-0 w-full h-full object-cover"
-                    referrerPolicy="no-referrer"
-                  />
-                </AnimatePresence>
-                <div className="absolute inset-0 bg-gradient-to-t from-card via-card/80 to-card/30 pointer-events-none" />
-              </>
-            ) : (
-              // Clean, unadorned solid background (no blue vertical line)
-              <div className="w-full h-full bg-card" />
-            )}
+            <AnimatePresence mode="popLayout" initial={false}>
+              <motion.div
+                key={`novel-page-${slideIndex}`}
+                initial={currentDirection.initial}
+                animate={{ x: "0%", y: "0%", opacity: 1 }}
+                exit={currentDirection.exit}
+                transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
+                className="absolute inset-0 w-full h-full flex flex-col justify-between pt-8 px-3.5 pb-3 overflow-hidden bg-card select-none"
+              >
+                {novelBgImage && (
+                  <div className="absolute inset-0 pointer-events-none opacity-20 overflow-hidden">
+                    <img
+                      src={novelBgImage || undefined}
+                      alt=""
+                      className="w-full h-full object-cover filter blur-[1px]"
+                      referrerPolicy="no-referrer"
+                    />
+                  </div>
+                )}
+                <div className="relative z-10 flex-1 flex flex-col justify-center">
+                  <p className="text-[12px] leading-relaxed text-card-foreground font-serif line-clamp-7 italic text-left tracking-normal">
+                    {currentNovelSnippet}
+                  </p>
+                </div>
+                <div className="relative z-10 pt-1 flex items-center justify-between text-[9px] text-muted-foreground font-serif border-t border-border/30 mt-auto">
+                  <span className="truncate max-w-[100px]">{book.title}</span>
+                  <span className="font-mono text-[8px] opacity-70">p. {((slideIndex + tileSeed) % Math.max(1, novelSnippets.length)) + 1}</span>
+                </div>
+              </motion.div>
+            </AnimatePresence>
           </div>
         )}
 
         {/* TOP HEADER BAR: METRO TYPE BADGE */}
-        <div className="relative z-10 p-2 flex items-center justify-between w-full">
+        <div className="relative z-20 p-2 flex items-center justify-between w-full pointer-events-none">
           <span
-            className={`px-2 py-0.5 text-[9px] font-black tracking-widest uppercase text-white shadow-sm font-mono rounded-xs ${
+            className={`px-2 py-0.5 text-[9px] font-black tracking-widest uppercase text-white font-mono rounded-xs ${
               book.type === 'comic' ? 'bg-amber-600' : 'bg-blue-600'
             }`}
           >
@@ -263,44 +286,25 @@ function MetroBookTile({
           </span>
         </div>
 
-        {/* MIDDLE DYNAMIC CONTENT AREA: SHUFFLED DIRECTION LIVE SLIDE */}
-        <div className="relative z-10 px-3 py-1 flex-1 flex flex-col justify-end pb-2 overflow-hidden">
-          {book.type === 'novel' ? (
-            // Dynamic novel live text slide (no blue vertical accent line)
-            <div className="relative w-full h-24 overflow-hidden flex items-center">
+        {/* MIDDLE DYNAMIC CONTENT AREA: Comic speech bubble preview if comic */}
+        {book.type === 'comic' && currentComicPage?.speechSnippet && (
+          <div className="relative z-10 px-3 py-1 flex-1 flex flex-col justify-end pb-2 overflow-hidden">
+            <div className="relative w-full overflow-hidden">
               <AnimatePresence mode="popLayout" initial={false}>
                 <motion.p
-                  key={`novel-text-${slideIndex}`}
+                  key={`comic-bubble-${slideIndex}`}
                   initial={currentDirection.initial}
                   animate={{ x: "0%", y: "0%", opacity: 1 }}
                   exit={currentDirection.exit}
                   transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
-                  className="absolute inset-0 text-[11px] leading-relaxed text-card-foreground font-serif line-clamp-4 italic bg-card/90 border border-border/50 p-2 backdrop-blur-xs flex items-center rounded-sm shadow-xs"
+                  className="text-[10px] leading-tight text-card-foreground font-sans line-clamp-2 bg-card/90 p-1.5 rounded-sm border border-amber-500/40 backdrop-blur-xs"
                 >
-                  {currentNovelSnippet}
+                  💬 "{currentComicPage.speechSnippet}"
                 </motion.p>
               </AnimatePresence>
             </div>
-          ) : (
-            // Dynamic comic speech bubble preview
-            currentComicPage?.speechSnippet && (
-              <div className="relative w-full overflow-hidden">
-                <AnimatePresence mode="popLayout" initial={false}>
-                  <motion.p
-                    key={`comic-bubble-${slideIndex}`}
-                    initial={currentDirection.initial}
-                    animate={{ x: "0%", y: "0%", opacity: 1 }}
-                    exit={currentDirection.exit}
-                    transition={{ duration: 0.4, ease: [0.25, 1, 0.5, 1] }}
-                    className="text-[10px] leading-tight text-card-foreground font-sans line-clamp-2 bg-card/90 p-1.5 rounded-sm border border-amber-500/40 backdrop-blur-xs shadow-xs"
-                  >
-                    💬 "{currentComicPage.speechSnippet}"
-                  </motion.p>
-                </AnimatePresence>
-              </div>
-            )
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* TITLE & AUTHOR (BELOW THE BOOK PREVIEW) */}
@@ -359,6 +363,107 @@ export function Bookshelf({
   const [activeComicPage, setActiveComicPage] = useState(0);
   const [fontSize, setFontSize] = useState<'sm' | 'md' | 'lg' | 'xl'>('md');
   const shelfRef = useRef<HTMLDivElement>(null);
+  const novelScrollRef = useRef<HTMLDivElement>(null);
+  const lockedNovelAnchorRef = useRef<{ charOffset: number } | null>(null);
+  const isAdjustingFontSizeRef = useRef<boolean>(false);
+
+  const calculateNovelAbsoluteAnchor = (container: HTMLElement): number => {
+    try {
+      const containerRect = container.getBoundingClientRect();
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      let totalChars = 0;
+      let textNode: Text | null;
+      const range = document.createRange();
+
+      while ((textNode = walker.nextNode() as Text | null)) {
+        const text = textNode.textContent || "";
+        const len = text.length;
+        if (len === 0) continue;
+
+        range.selectNodeContents(textNode);
+        const rects = range.getClientRects();
+        let intersectsTop = false;
+        for (let i = 0; i < rects.length; i++) {
+          if (rects[i].bottom > containerRect.top + 4) {
+            intersectsTop = true;
+            break;
+          }
+        }
+
+        if (intersectsTop) {
+          for (let c = 0; c < len; c++) {
+            if (/\s/.test(text[c])) continue;
+            try {
+              range.setStart(textNode, c);
+              range.setEnd(textNode, Math.min(c + 1, len));
+              const crs = range.getClientRects();
+              if (crs.length > 0 && crs[0].bottom > containerRect.top + 4) {
+                return totalChars + c;
+              }
+            } catch (e) {
+              break;
+            }
+          }
+        }
+        totalChars += len;
+      }
+    } catch (e) {}
+    return 0;
+  };
+
+  const handleNovelFontSizeChange = (newSize: 'sm' | 'md' | 'lg' | 'xl') => {
+    if (novelScrollRef.current) {
+      if (lockedNovelAnchorRef.current === null) {
+        const offset = calculateNovelAbsoluteAnchor(novelScrollRef.current);
+        lockedNovelAnchorRef.current = { charOffset: offset };
+      }
+    }
+    isAdjustingFontSizeRef.current = true;
+    setFontSize(newSize);
+  };
+
+  useLayoutEffect(() => {
+    if (lockedNovelAnchorRef.current && novelScrollRef.current) {
+      const { charOffset } = lockedNovelAnchorRef.current;
+      const container = novelScrollRef.current;
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      let totalChars = 0;
+      let textNode: Text | null;
+      const range = document.createRange();
+
+      while ((textNode = walker.nextNode() as Text | null)) {
+        const text = textNode.textContent || "";
+        const len = text.length;
+        if (totalChars + len > charOffset) {
+          const offsetInNode = Math.max(0, Math.min(charOffset - totalChars, len - 1));
+          try {
+            range.setStart(textNode, offsetInNode);
+            range.setEnd(textNode, Math.min(offsetInNode + 1, len));
+            const rects = range.getClientRects();
+            if (rects.length > 0) {
+              const rect = rects[0];
+              const containerRect = container.getBoundingClientRect();
+              const delta = rect.top - containerRect.top;
+              container.scrollTop += delta;
+              break;
+            }
+          } catch (e) {}
+
+          const pRect = textNode.parentElement?.getBoundingClientRect();
+          if (pRect) {
+            const containerRect = container.getBoundingClientRect();
+            container.scrollTop += (pRect.top - containerRect.top);
+            break;
+          }
+          break;
+        }
+        totalChars += len;
+      }
+      requestAnimationFrame(() => {
+        isAdjustingFontSizeRef.current = false;
+      });
+    }
+  }, [fontSize]);
 
   // Load books from localStorage & Cloudflare R2 media storage
   const loadBooks = async () => {
@@ -475,7 +580,7 @@ export function Bookshelf({
   );
 
   return (
-    <div className="w-full py-8 border-t border-border/40 max-w-full" id="bookshelf-section">
+    <div className="w-full py-8 border-t border-border/40 max-w-full shadow-none" id="bookshelf-section">
       <div className="w-full">
         {/* Title & Stats */}
         <div className="flex items-center justify-between mb-6">
@@ -491,14 +596,14 @@ export function Bookshelf({
         </div>
 
         {/* Horizontal scroll shelf wrapper */}
-        <div className="relative group/shelf">
+        <div className="relative group/shelf shadow-none">
           {/* Left / Right Flip Arrow Buttons */}
           {books.length > 0 && (
             <>
               <button
                 type="button"
                 onClick={() => scrollShelf('left')}
-                className="absolute -left-3 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-background/95 border border-border shadow-xl text-foreground hover:bg-primary hover:text-primary-foreground transition-all duration-200 focus:outline-none backdrop-blur-md opacity-90 sm:opacity-0 sm:group-hover/shelf:opacity-100 sm:group-hover/shelf:translate-x-0 cursor-pointer"
+                className="absolute -left-3 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-background/95 border border-border shadow-none text-foreground hover:bg-primary hover:text-primary-foreground transition-all duration-200 focus:outline-none backdrop-blur-md opacity-90 sm:opacity-0 sm:group-hover/shelf:opacity-100 sm:group-hover/shelf:translate-x-0 cursor-pointer"
                 aria-label="Scroll left"
               >
                 <ChevronLeft className="w-5 h-5" />
@@ -506,7 +611,7 @@ export function Bookshelf({
               <button
                 type="button"
                 onClick={() => scrollShelf('right')}
-                className="absolute -right-3 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-background/95 border border-border shadow-xl text-foreground hover:bg-primary hover:text-primary-foreground transition-all duration-200 focus:outline-none backdrop-blur-md opacity-90 sm:opacity-0 sm:group-hover/shelf:opacity-100 sm:group-hover/shelf:translate-x-0 cursor-pointer"
+                className="absolute -right-3 top-1/2 -translate-y-1/2 z-20 p-2.5 rounded-full bg-background/95 border border-border shadow-none text-foreground hover:bg-primary hover:text-primary-foreground transition-all duration-200 focus:outline-none backdrop-blur-md opacity-90 sm:opacity-0 sm:group-hover/shelf:opacity-100 sm:group-hover/shelf:translate-x-0 cursor-pointer"
                 aria-label="Scroll right"
               >
                 <ChevronRight className="w-5 h-5" />
@@ -571,7 +676,7 @@ export function Bookshelf({
                         variant={fontSize === 'sm' ? 'secondary' : 'ghost'} 
                         size="icon" 
                         className="h-6 w-6 text-[10px] font-bold"
-                        onClick={() => setFontSize('sm')}
+                        onClick={() => handleNovelFontSizeChange('sm')}
                       >
                         A-
                       </Button>
@@ -579,7 +684,7 @@ export function Bookshelf({
                         variant={fontSize === 'md' ? 'secondary' : 'ghost'} 
                         size="icon" 
                         className="h-6 w-6 text-xs font-bold"
-                        onClick={() => setFontSize('md')}
+                        onClick={() => handleNovelFontSizeChange('md')}
                       >
                         A
                       </Button>
@@ -587,7 +692,7 @@ export function Bookshelf({
                         variant={fontSize === 'lg' ? 'secondary' : 'ghost'} 
                         size="icon" 
                         className="h-6 w-6 text-sm font-bold"
-                        onClick={() => setFontSize('lg')}
+                        onClick={() => handleNovelFontSizeChange('lg')}
                       >
                         A+
                       </Button>
@@ -641,11 +746,19 @@ export function Bookshelf({
               </div>
 
               {/* BOOK READER PANEL */}
-              <div className="flex-1 overflow-y-auto p-6 md:p-8 bg-card/10">
+              <div 
+                ref={novelScrollRef} 
+                onScroll={() => {
+                  if (!isAdjustingFontSizeRef.current) {
+                    lockedNovelAnchorRef.current = null;
+                  }
+                }}
+                className="flex-1 overflow-y-auto p-6 md:p-8 bg-card/10"
+              >
                 {selectedBook.type === 'novel' ? (
-                  <article className="max-w-2xl mx-auto prose dark:prose-invert font-serif">
+                  <article className="max-w-2xl mx-auto prose font-serif reader-content-body">
                     <div 
-                      className={`${getFontSizeClass()} text-foreground/90 space-y-5`}
+                      className={`${getFontSizeClass()} text-foreground space-y-5`}
                       dangerouslySetInnerHTML={{ __html: selectedBook.content || "<p className='italic text-muted-foreground'>This book contains no text content yet.</p>" }}
                     />
                   </article>

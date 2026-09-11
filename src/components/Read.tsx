@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo } from 'react';
 import { BookOpen, PenTool, Wrench, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, RotateCcw, Book, Star, Sparkles, FolderOpen, Heart, Layers, PanelLeftOpen, PanelLeftClose, Maximize, Minimize, Sun, Moon, Laptop, Settings, Grid, Crop, Trash2, Play, MessageSquare, StickyNote, ArrowLeftRight, ArrowLeft, ArrowRight } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -154,11 +154,12 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
   const renditionRef = React.useRef<any>(null);
   const [pdfNumPages, setPdfNumPages] = useState<number | null>(null);
   const [textPages, setTextPages] = useState(1);
+  const [textToc, setTextToc] = useState<any[]>([]);
   const textContentRef = React.useRef<HTMLDivElement>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const containerRef = React.useRef<HTMLDivElement>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  const { theme, setTheme } = useTheme();
+  const { theme, setTheme, resolvedTheme } = useTheme();
 
   const [recentBooks, setRecentBooks] = useState<RecentBookMetadata[]>([]);
 
@@ -354,23 +355,42 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
 
   React.useEffect(() => {
     if (renditionRef.current) {
-      const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      const isDark = (resolvedTheme || theme) === 'dark';
       try { renditionRef.current.themes.select(isDark ? 'dark' : 'light'); } catch(e) {}
     }
-  }, [theme]);
+  }, [theme, resolvedTheme]);
+
+  const lockedEpubCfiRef = React.useRef<string | null>(null);
 
   React.useEffect(() => {
     if (renditionRef.current && renditionRef.current.book) {
       try {
+        const currentLocation = renditionRef.current.location;
+        const cfi = lockedEpubCfiRef.current || (currentLocation ? currentLocation.start.cfi : null) || (typeof location === 'string' && location.startsWith('epubcfi') ? location : null);
+
         renditionRef.current.themes.fontSize(`${fontSize}px`);
+        if (cfi) {
+          try {
+            renditionRef.current.display(cfi);
+          } catch (e) {}
+        }
+        
         const width = containerSize.width || window.innerWidth;
         const height = containerSize.height || window.innerHeight;
         const chars = Math.max(100, Math.floor((width * height) / (fontSize * fontSize * 1.5)));
+        
         renditionRef.current.book.locations.generate(chars).then(() => {
           setEpubTotalPages(renditionRef.current.book.locations.length());
-          if (renditionRef.current.location) {
+          if (cfi) {
+             renditionRef.current.display(cfi).then(() => {
+                if (renditionRef.current.location) {
+                   setEpubCurrentPage(renditionRef.current.location.start.location);
+                }
+             });
+          } else if (renditionRef.current.location) {
              setEpubCurrentPage(renditionRef.current.location.start.location);
           }
+          // Do NOT clear lockedEpubCfiRef here! Keep it locked while user repeatedly adjusts font size.
         });
       } catch(e) {}
     }
@@ -635,20 +655,270 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
   }, [currentPage, isSidebarOpen, isFullscreen]);
 
   const [pageInputValue, setPageInputValue] = useState("");
+  
+  interface AbsoluteTextAnchor {
+    absoluteCharOffset: number; // Exact character index in the chapter/novel text stream
+    snippet: string;            // Text snippet for logging/verification
+    sourcePage: number;         // Page where the anchor was originally locked
+  }
 
-  useEffect(() => {
+  const lockedAnchorRef = React.useRef<AbsoluteTextAnchor | null>(null);
+  const [isReflowing, setIsReflowing] = useState(false);
+
+  // Clear locked anchor on manual page turns or manual navigation
+  const clearLockedAnchor = useCallback(() => {
+    lockedAnchorRef.current = null;
+    lockedEpubCfiRef.current = null;
+  }, []);
+
+  // 1. CALCULATE ABSOLUTE ANCHOR POINT:
+  // Before changing font size, find the first visible text node on the current page.
+  // Calculate its absolute character offset in the source data.
+  const calculateAbsoluteAnchor = useCallback((container: HTMLElement, targetPage: number, pageWidth: number): AbsoluteTextAnchor => {
+    try {
+      const containerRect = container.getBoundingClientRect();
+      const containerLeft = containerRect.left;
+      
+      // Page column horizontal boundaries in container coordinates
+      const pageStartX = targetPage * pageWidth;
+      const pageEndX = (targetPage + 1) * pageWidth;
+
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      let totalChars = 0;
+      let textNode: Text | null;
+      const range = document.createRange();
+
+      while ((textNode = walker.nextNode() as Text | null)) {
+        const text = textNode.textContent || "";
+        const len = text.length;
+        if (len === 0) continue;
+
+        range.selectNodeContents(textNode);
+        const rects = range.getClientRects();
+
+        // Check if any part of this text node intersects target page column
+        let intersectsPage = false;
+        for (let i = 0; i < rects.length; i++) {
+          const r = rects[i];
+          const relLeft = r.left - containerLeft;
+          const relRight = r.right - containerLeft;
+          if (relRight > pageStartX + 4 && relLeft < pageEndX - 4) {
+            intersectsPage = true;
+            break;
+          }
+        }
+
+        if (intersectsPage) {
+          // Scan for the first readable non-whitespace character on this page
+          for (let c = 0; c < len; c++) {
+            if (/\s/.test(text[c])) continue; // skip leading whitespace
+            try {
+              range.setStart(textNode, c);
+              range.setEnd(textNode, Math.min(c + 1, len));
+              const crs = range.getClientRects();
+              if (crs.length > 0 && crs[0].width > 0) {
+                const relLeft = crs[0].left - containerLeft;
+                const relRight = crs[0].right - containerLeft;
+                if (relRight > pageStartX + 2 && relLeft < pageEndX - 2) {
+                  const absoluteCharOffset = totalChars + c;
+                  const snippet = text.slice(c, c + 40).replace(/\s+/g, ' ').trim();
+                  return {
+                    absoluteCharOffset,
+                    snippet,
+                    sourcePage: targetPage
+                  };
+                }
+              }
+            } catch (e) {
+              break;
+            }
+          }
+        }
+
+        totalChars += len;
+      }
+    } catch (e) {
+      console.error("Error calculating absolute anchor:", e);
+    }
+
+    return {
+      absoluteCharOffset: 0,
+      snippet: "",
+      sourcePage: targetPage
+    };
+  }, []);
+
+  // 3. PRECISE RESTORATION:
+  // After applying the new font size and allowing the DOM to reflow, calculate the exact new page number
+  // where that absolute character offset is located, and force the viewport to that exact position.
+  const findPageForAbsoluteOffset = useCallback((container: HTMLElement, targetOffset: number, pageWidth: number): number => {
+    try {
+      const containerRect = container.getBoundingClientRect();
+      const containerLeft = containerRect.left;
+      const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+      let totalChars = 0;
+      let textNode: Text | null;
+      const range = document.createRange();
+
+      while ((textNode = walker.nextNode() as Text | null)) {
+        const text = textNode.textContent || "";
+        const len = text.length;
+
+        if (totalChars + len > targetOffset) {
+          const offsetInNode = Math.max(0, Math.min(targetOffset - totalChars, len - 1));
+
+          // Test target character
+          try {
+            range.setStart(textNode, offsetInNode);
+            range.setEnd(textNode, Math.min(offsetInNode + 1, len));
+            const rects = range.getClientRects();
+            if (rects.length > 0 && rects[0].width > 0) {
+              const relLeft = rects[0].left - containerLeft;
+              return Math.floor(Math.max(0, relLeft) / pageWidth);
+            }
+          } catch (e) {}
+
+          // Probe adjacent characters in the node if exact char was whitespace or newline
+          for (let delta = 1; delta <= 20; delta++) {
+            if (offsetInNode + delta < len) {
+              try {
+                range.setStart(textNode, offsetInNode + delta);
+                range.setEnd(textNode, Math.min(offsetInNode + delta + 1, len));
+                const rects = range.getClientRects();
+                if (rects.length > 0 && rects[0].width > 0) {
+                  const relLeft = rects[0].left - containerLeft;
+                  return Math.floor(Math.max(0, relLeft) / pageWidth);
+                }
+              } catch (e) {}
+            }
+            if (offsetInNode - delta >= 0) {
+              try {
+                range.setStart(textNode, offsetInNode - delta);
+                range.setEnd(textNode, Math.min(offsetInNode - delta + 1, len));
+                const rects = range.getClientRects();
+                if (rects.length > 0 && rects[0].width > 0) {
+                  const relLeft = rects[0].left - containerLeft;
+                  return Math.floor(Math.max(0, relLeft) / pageWidth);
+                }
+              } catch (e) {}
+            }
+          }
+
+          // Fallback to parent element rect
+          const pRect = textNode.parentElement?.getBoundingClientRect();
+          if (pRect) {
+            const relLeft = pRect.left - containerLeft;
+            return Math.floor(Math.max(0, relLeft) / pageWidth);
+          }
+          break;
+        }
+
+        totalChars += len;
+      }
+
+      if (totalChars > 0 && targetOffset >= totalChars) {
+        const scrollWidth = container.scrollWidth;
+        return Math.max(0, Math.ceil(scrollWidth / pageWidth) - 1);
+      }
+    } catch (e) {
+      console.error("Error finding page for absolute offset:", e);
+    }
+    return 0;
+  }, []);
+
+  // 2. LOCK THE ANCHOR:
+  // While the user is actively adjusting font size (repeatedly clicking +/-), do NOT recalculate the anchor.
+  // Keep using the same absolute anchor point captured at the very first font size change.
+  // Only clear/update the anchor when the user manually scrolls or changes pages.
+  const updateFontSize = useCallback((newSizeOrUpdater: number | ((prev: number) => number)) => {
+    if (selectedBook?.fileType === "text" && textContentRef.current) {
+      const activeWidth = pageDimensions.width || containerSize.width || 600;
+      if (lockedAnchorRef.current === null) {
+        lockedAnchorRef.current = calculateAbsoluteAnchor(textContentRef.current, currentPage, activeWidth);
+      }
+      setIsReflowing(true);
+    } else if (selectedBook?.fileType === "epub" && renditionRef.current) {
+      if (lockedEpubCfiRef.current === null) {
+        try {
+          const loc = renditionRef.current.location || (renditionRef.current.currentLocation ? renditionRef.current.currentLocation() : null);
+          if (loc?.start?.cfi) {
+            lockedEpubCfiRef.current = loc.start.cfi;
+          } else if (typeof location === 'string' && location.startsWith('epubcfi')) {
+            lockedEpubCfiRef.current = location;
+          }
+        } catch (e) {}
+      }
+    }
+    setFontSize(newSizeOrUpdater);
+  }, [selectedBook, pageDimensions.width, containerSize.width, currentPage, calculateAbsoluteAnchor]);
+
+  const updateTextAlign = useCallback((align: string) => {
+    if (selectedBook?.fileType === "text" && textContentRef.current) {
+      const activeWidth = pageDimensions.width || containerSize.width || 600;
+      if (lockedAnchorRef.current === null) {
+        lockedAnchorRef.current = calculateAbsoluteAnchor(textContentRef.current, currentPage, activeWidth);
+      }
+      setIsReflowing(true);
+    }
+    setTextAlign(align);
+  }, [selectedBook, pageDimensions.width, containerSize.width, currentPage, calculateAbsoluteAnchor]);
+
+  const updateFontFamily = useCallback((font: string) => {
+    if (selectedBook?.fileType === "text" && textContentRef.current) {
+      const activeWidth = pageDimensions.width || containerSize.width || 600;
+      if (lockedAnchorRef.current === null) {
+        lockedAnchorRef.current = calculateAbsoluteAnchor(textContentRef.current, currentPage, activeWidth);
+      }
+      setIsReflowing(true);
+    }
+    setFontFamily(font);
+  }, [selectedBook, pageDimensions.width, containerSize.width, currentPage, calculateAbsoluteAnchor]);
+
+  // Synchronous layout effect: executes after DOM styles are updated with new font size, before browser paint
+  useLayoutEffect(() => {
     const activeWidth = pageDimensions.width || containerSize.width;
     if (selectedBook?.fileType === 'text' && textContentRef.current && activeWidth > 0) {
-      const timer = setTimeout(() => {
-        if (textContentRef.current) {
-          const scrollWidth = textContentRef.current.scrollWidth;
-          const pages = Math.ceil(scrollWidth / activeWidth);
-          setTextPages(Math.max(1, pages));
-        }
-      }, 100);
-      return () => clearTimeout(timer);
+      const container = textContentRef.current;
+      const scrollWidth = container.scrollWidth;
+      const totalPages = Math.max(1, Math.ceil(scrollWidth / activeWidth));
+      
+      let newPage = currentPage;
+      if (lockedAnchorRef.current !== null) {
+        const restored = findPageForAbsoluteOffset(container, lockedAnchorRef.current.absoluteCharOffset, activeWidth);
+        newPage = Math.max(0, Math.min(totalPages - 1, restored));
+        // CRITICAL: Do NOT nullify lockedAnchorRef.current here!
+        // Keep using the same locked anchor point while user continues adjusting font size.
+      }
+
+      setCurrentPage(newPage);
+      setTextPages(totalPages);
+
+      // Re-enable smooth transition after layout reflow has rendered
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          setIsReflowing(false);
+        });
+      });
+
+      // Update table of contents with new page offsets
+      const headings = container.querySelectorAll('h1, h2, h3');
+      if (headings.length > 0) {
+        const newToc = Array.from(headings).map(h => {
+          let current: HTMLElement | null = h as HTMLElement;
+          let offsetLeft = 0;
+          while (current && current !== container) {
+            offsetLeft += current.offsetLeft || 0;
+            current = current.offsetParent as HTMLElement | null;
+          }
+          const page = Math.floor(offsetLeft / activeWidth);
+          return { label: h.textContent || '', page };
+        }).filter(item => item.label.trim() !== '');
+        setTextToc(newToc);
+      } else {
+        setTextToc([]);
+      }
     }
-  }, [selectedBook, pageDimensions.width, pageDimensions.height, fontSize, fontFamily, textAlign]);
+  }, [selectedBook, pageDimensions.width, pageDimensions.height, fontSize, fontFamily, textAlign, findPageForAbsoluteOffset]);
 
   useEffect(() => {
     if (onActiveStateChange) {
@@ -657,6 +927,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
   }, [selectedBook, onActiveStateChange]);
 
   const nextPage = useCallback(() => {
+    clearLockedAnchor();
     if (selectedBook) {
       if (gridView && panelsCache[currentPage] && panelsCache[currentPage].length > 0) {
         if (currentPanelIndex < panelsCache[currentPage].length - 1) {
@@ -678,9 +949,10 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
         return next;
       });
     }
-  }, [selectedBook, pdfNumPages, textPages, gridView, panelsCache, currentPage, currentPanelIndex]);
+  }, [selectedBook, pdfNumPages, textPages, gridView, panelsCache, currentPage, currentPanelIndex, clearLockedAnchor]);
 
   const prevPage = useCallback(() => {
+    clearLockedAnchor();
     if (selectedBook) {
       if (gridView && panelsCache[currentPage] && panelsCache[currentPage].length > 0) {
         if (currentPanelIndex > 0) {
@@ -701,7 +973,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
         return prev;
       });
     }
-  }, [selectedBook, gridView, panelsCache, currentPage, currentPanelIndex]);
+  }, [selectedBook, gridView, panelsCache, currentPage, currentPanelIndex, clearLockedAnchor]);
 
   // Touch gestures for swipe (finger slide left/right) & double-tap (toggle fullscreen)
   const touchStartRef = React.useRef<{ x: number; y: number; time: number } | null>(null);
@@ -1245,6 +1517,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
               currentPage={currentPage}
               totalPages={selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : (selectedBook.pages?.length || 1)}
               onNavigateToPage={(pageNumber) => {
+                clearLockedAnchor();
                 const targetIdx = Math.max(0, pageNumber - 1);
                 const maxP = (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : (selectedBook.pages?.length || 1)) - 1;
                 setCurrentPage(Math.min(targetIdx, maxP));
@@ -1269,9 +1542,9 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                      <div className="space-y-1.5">
                         <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">{t("fontSizeLabel")}</label>
                         <div className="flex bg-muted rounded-md overflow-hidden p-0.5 items-center justify-between">
-                             <button onClick={() => setFontSize(f => Math.max(8, f - 2))} className="px-3 py-1 flex-1 text-center font-bold hover:bg-background rounded text-muted-foreground cursor-pointer">-</button>
-                             <input type="number" value={fontSize} onChange={(e) => setFontSize(Number(e.target.value) || 18)} className="w-16 bg-transparent text-center focus:outline-none focus:ring-0 text-sm font-semibold text-foreground mx-1" />
-                             <button onClick={() => setFontSize(f => Math.min(100, f + 2))} className="px-3 py-1 flex-1 text-center font-bold hover:bg-background rounded text-muted-foreground cursor-pointer">+</button>
+                             <button onClick={() => updateFontSize(f => Math.max(8, f - 2))} className="px-3 py-1 flex-1 text-center font-bold hover:bg-background rounded text-muted-foreground cursor-pointer">-</button>
+                             <input type="number" value={fontSize} onChange={(e) => updateFontSize(Number(e.target.value) || 18)} className="w-16 bg-transparent text-center focus:outline-none focus:ring-0 text-sm font-semibold text-foreground mx-1" />
+                             <button onClick={() => updateFontSize(f => Math.min(100, f + 2))} className="px-3 py-1 flex-1 text-center font-bold hover:bg-background rounded text-muted-foreground cursor-pointer">+</button>
                         </div>
                      </div>
                      <div className="space-y-1.5">
@@ -1284,7 +1557,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                            ].map(al => (
                              <button
                                key={al.id}
-                               onClick={() => setTextAlign(al.id)}
+                               onClick={() => updateTextAlign(al.id)}
                                className={cn(
                                  "flex-1 py-1 text-sm font-semibold rounded shadow-sm hover:bg-background/50", textAlign === al.id ? "bg-background text-foreground" : "text-muted-foreground bg-transparent shadow-none")}
                              >
@@ -1303,7 +1576,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                            ].map(font => (
                              <button
                                key={font.id}
-                               onClick={() => setFontFamily(font.id)}
+                               onClick={() => updateFontFamily(font.id)}
                                className={cn(
                                  "text-left px-3 py-1.5 text-sm font-semibold rounded hover:bg-muted/70", font.id, fontFamily === font.id ? "bg-muted text-foreground" : "text-muted-foreground bg-transparent")}
                              >
@@ -1364,7 +1637,10 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                         variant="ghost" 
                         size="icon" 
                         className="h-5 w-5 rounded-none hover:bg-muted" 
-                        onClick={() => setCurrentPage(p => Math.max(0, p - 1))}
+                        onClick={() => {
+                          clearLockedAnchor();
+                          setCurrentPage(p => Math.max(0, p - 1));
+                        }}
                         disabled={currentPage === 0}
                       >
                         <ChevronLeft className="w-3 h-3" />
@@ -1376,8 +1652,9 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           onChange={(e) => {
                             setPageInputValue(e.target.value);
                             const val = parseInt(e.target.value);
-                            const maxPages = selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1);
+                            const maxPages = selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : selectedBook.fileType === 'text' ? textPages : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1);
                             if (!isNaN(val) && val >= 1 && val <= maxPages) {
+                              clearLockedAnchor();
                               setCurrentPage(val - 1);
                             }
                           }}
@@ -1385,7 +1662,7 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           className="w-7 h-5 text-[10px] text-center bg-muted border-none p-0 focus-visible:ring-1 focus-visible:ring-primary rounded-none font-bold"
                         />
                         <span className="text-[9px] text-muted-foreground/60 font-mono">
-                          / {selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1)}
+                          / {selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : selectedBook.fileType === 'text' ? textPages : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1)}
                         </span>
                       </div>
                       <Button 
@@ -1393,10 +1670,11 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                         size="icon" 
                         className="h-5 w-5 rounded-none hover:bg-muted" 
                         onClick={() => {
-                          const maxPages = selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1);
+                          clearLockedAnchor();
+                          const maxPages = selectedBook.fileType === 'epub' ? Math.max(1, epubTotalPages) : selectedBook.fileType === 'text' ? textPages : (selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1);
                           setCurrentPage(p => Math.min(maxPages - 1, p + 1));
                         }}
-                        disabled={selectedBook.fileType === 'epub' ? (epubCurrentPage >= epubTotalPages) : (currentPage === ((selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1) - 1))}
+                        disabled={selectedBook.fileType === 'epub' ? (epubCurrentPage >= epubTotalPages) : (currentPage === ((selectedBook.fileType === 'text' ? textPages : selectedBook.fileType === 'pdf' && pdfNumPages ? pdfNumPages : selectedBook.pages?.length || 1) - 1))}
                       >
                         <ChevronRight className="w-3 h-3" />
                       </Button>
@@ -1409,7 +1687,10 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           <div 
                             key={idx}
                             id={`thumb-${idx}`}
-                            onClick={() => setCurrentPage(idx)}
+                            onClick={() => {
+                              clearLockedAnchor();
+                              setCurrentPage(idx);
+                            }}
                             className={cn(
                               "relative aspect-[3/4] w-full rounded-none overflow-hidden cursor-pointer border transition-all bg-white flex items-center justify-center shadow-xs",
                               currentPage === idx 
@@ -1440,7 +1721,10 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           {epubToc.map((item, idx) => (
                             <div 
                               key={idx}
-                              onClick={() => setLocation(item.href)}
+                              onClick={() => {
+                                clearLockedAnchor();
+                                setLocation(item.href);
+                              }}
                               className="text-xs px-2 py-1.5 hover:bg-muted cursor-pointer rounded-md truncate transition-colors text-foreground"
                             >
                               {item.label}
@@ -1451,7 +1735,26 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           )}
                         </div>
                       ) : selectedBook.fileType === 'text' ? (
-                        <div className="p-4 text-xs text-center text-muted-foreground">Text Mode</div>
+                        <div className="flex-1 overflow-y-auto no-scrollbar space-y-1">
+                          <div className="text-sm font-bold text-muted-foreground px-2 py-2 mb-2 sticky top-0 bg-background/95 backdrop-blur z-10 border-b">
+                            {t("tableOfContents") || "Table of Contents"}
+                          </div>
+                          {textToc.map((item, idx) => (
+                            <div 
+                              key={idx}
+                              onClick={() => {
+                                clearLockedAnchor();
+                                setCurrentPage(item.page);
+                              }}
+                              className="text-xs px-2 py-1.5 hover:bg-muted cursor-pointer rounded-md truncate transition-colors text-foreground"
+                            >
+                              {item.label}
+                            </div>
+                          ))}
+                          {textToc.length === 0 && (
+                            <div className="p-4 text-xs text-center text-muted-foreground">No Table of Contents</div>
+                          )}
+                        </div>
                       ) : (
                       selectedBook.pages.map((p, idx) => {
                         const isComicObj = typeof p === 'object' && p && (p.tree || p.panels);
@@ -1464,7 +1767,10 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                           <div 
                             key={idx}
                             id={`thumb-${idx}`}
-                            onClick={() => setCurrentPage(idx)}
+                            onClick={() => {
+                              clearLockedAnchor();
+                              setCurrentPage(idx);
+                            }}
                             className={cn(
                               "group relative aspect-[3/4] w-full rounded-none overflow-hidden cursor-pointer border transition-all bg-white flex items-center justify-center",
                               currentPage === idx 
@@ -1580,16 +1886,18 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                         swipeable={true}
                         getRendition={(rendition: any) => {
                           renditionRef.current = rendition;
-                          const isDark = theme === 'dark' || (theme === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+                          const isDark = (resolvedTheme || theme) === 'dark';
                           
                           rendition.themes.register('light', {
-                            'body': { 'background': 'transparent !important', 'color': '#0f172a !important' },
-                            'p, span, div, h1, h2, h3, h4, h5, h6, a, li, blockquote': { 'color': '#0f172a !important' },
+                            'body': { 'background': 'transparent !important', 'color': '#000000 !important' },
+                            '*': { 'color': '#000000 !important' },
+                            'p, span, div, h1, h2, h3, h4, h5, h6, a, li, blockquote, em, strong, b, i, small': { 'color': '#000000 !important' },
                             'img': { 'max-width': '100% !important', 'height': 'auto !important' }
                           });
                           rendition.themes.register('dark', {
-                            'body': { 'background': 'transparent !important', 'color': '#f8fafc !important' },
-                            'p, span, div, h1, h2, h3, h4, h5, h6, a, li, blockquote': { 'color': '#f8fafc !important' },
+                            'body': { 'background': 'transparent !important', 'color': '#ffffff !important' },
+                            '*': { 'color': '#ffffff !important' },
+                            'p, span, div, h1, h2, h3, h4, h5, h6, a, li, blockquote, em, strong, b, i, small': { 'color': '#ffffff !important' },
                             'img': { 'max-width': '100% !important', 'height': 'auto !important' }
                           });
                           rendition.themes.select(isDark ? 'dark' : 'light');
@@ -1655,22 +1963,30 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                         if (bodyMatch) displayContent = bodyMatch[1];
                         displayContent = displayContent.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "");
                         displayContent = displayContent.replace(/<link[^>]*>/gi, "");
+                        // Clean out hardcoded inline color/background styles that could conflict with light/dark theme
+                        displayContent = displayContent.replace(/style="([^"]*)"/gi, (_, styleContent) => {
+                          const cleaned = styleContent
+                            .replace(/(?:^|;)\s*(?:color|background-color|background)\s*:[^;]*/gi, "")
+                            .trim();
+                          return cleaned ? `style="${cleaned}"` : "";
+                        });
                       }
 
                       return (
-                        <div className="absolute inset-0 overflow-hidden bg-background text-foreground select-text">
+                        <div className="absolute inset-0 overflow-hidden bg-background text-foreground select-text reader-text-container">
                           <div 
                             className="w-full h-full"
                             style={{
                               transform: `translateX(-${currentPage * pageWidth}px)`,
-                              transition: 'transform 0.3s ease'
+                              transition: isReflowing ? 'none' : 'transform 0.3s ease'
                             }}
                           >
                             <div 
                               ref={textContentRef}
                               className={cn(
-                                isHtml && "prose dark:prose-invert max-w-none",
-                                "h-full leading-relaxed break-words [&_img]:max-w-full [&_img]:max-h-[calc(100vh-12rem)] [&_img]:object-contain [&_img]:break-inside-avoid [&_p>img]:break-inside-avoid [&_figure]:break-inside-avoid",
+                                "reader-content-body",
+                                isHtml && "prose max-w-none",
+                                "h-full leading-relaxed break-words text-foreground [&_*]:text-foreground [&_img]:max-w-full [&_img]:max-h-[calc(100vh-12rem)] [&_img]:object-contain [&_img]:break-inside-avoid [&_p>img]:break-inside-avoid [&_figure]:break-inside-avoid",
                                 !isHtml && "whitespace-pre-wrap",
                                 fontFamily,
                                 textAlign
@@ -1680,11 +1996,15 @@ export const Read: React.FC<ReadProps> = ({ setActiveView, onActiveStateChange, 
                                 padding: `${padding}px`,
                                 columnWidth: `${colWidth}px`,
                                 columnGap: `${totalPadding}px`,
-                                height: '100%'
+                                height: '100%',
+                                color: 'var(--color-foreground)'
                               }}
                             >
                               {isHtml ? (
-                                <div dangerouslySetInnerHTML={{ __html: displayContent }} />
+                                <div 
+                                  className="reader-html-content"
+                                  dangerouslySetInnerHTML={{ __html: displayContent }} 
+                                />
                               ) : (
                                 displayContent
                               )}

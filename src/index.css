@@ -3,6 +3,8 @@
 @plugin "@tailwindcss/typography";
 @import "@fontsource-variable/geist/index.css";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
@@ -146,4 +148,86 @@ div#root > div > div > div:nth-of-type(2) > div > div {
   color: var(--color-foreground) !important;
   border-color: var(--color-border) !important;
 }
+
+/* Ensure prose typography matches theme tokens directly (black in light theme) */
+.prose {
+  --tw-prose-body: var(--color-foreground);
+  --tw-prose-headings: var(--color-foreground);
+  --tw-prose-lead: var(--color-foreground);
+  --tw-prose-links: var(--color-primary);
+  --tw-prose-bold: var(--color-foreground);
+  --tw-prose-counters: var(--color-foreground);
+  --tw-prose-bullets: var(--color-foreground);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-quotes: var(--color-foreground);
+  --tw-prose-quote-borders: var(--color-border);
+  --tw-prose-captions: var(--color-muted-foreground);
+  --tw-prose-code: var(--color-foreground);
+}
+
+.dark .prose {
+  --tw-prose-body: var(--color-foreground);
+  --tw-prose-headings: var(--color-foreground);
+  --tw-prose-lead: var(--color-foreground);
+  --tw-prose-links: var(--color-primary);
+  --tw-prose-bold: var(--color-foreground);
+  --tw-prose-counters: var(--color-foreground);
+  --tw-prose-bullets: var(--color-foreground);
+  --tw-prose-hr: var(--color-border);
+  --tw-prose-quotes: var(--color-foreground);
+  --tw-prose-quote-borders: var(--color-border);
+  --tw-prose-captions: var(--color-muted-foreground);
+  --tw-prose-code: var(--color-foreground);
+}
+
+/* Reader content text color guarantee: strictly pure black in light mode, pure white in dark mode */
+.reader-text-container,
+.reader-text-container *,
+.reader-content-body,
+.reader-content-body *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video),
+.reader-html-content,
+.reader-html-content *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video) {
+  color: var(--color-foreground) !important;
+}
+
+html:not(.dark) .reader-text-container,
+html:not(.dark) .reader-text-container *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video),
+html:not(.dark) .reader-content-body,
+html:not(.dark) .reader-content-body *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video),
+html:not(.dark) .reader-html-content,
+html:not(.dark) .reader-html-content *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video),
+html:not(.dark) .prose,
+html:not(.dark) .prose *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video) {
+  color: #000000 !important;
+  --tw-prose-body: #000000 !important;
+  --tw-prose-headings: #000000 !important;
+  --tw-prose-lead: #000000 !important;
+  --tw-prose-links: #000000 !important;
+  --tw-prose-bold: #000000 !important;
+  --tw-prose-counters: #000000 !important;
+  --tw-prose-bullets: #000000 !important;
+  --tw-prose-quotes: #000000 !important;
+  --tw-prose-code: #000000 !important;
+}
+
+html.dark .reader-text-container,
+html.dark .reader-text-container *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video),
+html.dark .reader-content-body,
+html.dark .reader-content-body *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video),
+html.dark .reader-html-content,
+html.dark .reader-html-content *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video),
+html.dark .prose,
+html.dark .prose *:not(img):not(svg):not(path):not(button):not(input):not(audio):not(video) {
+  color: #ffffff !important;
+  --tw-prose-body: #ffffff !important;
+  --tw-prose-headings: #ffffff !important;
+  --tw-prose-lead: #ffffff !important;
+  --tw-prose-links: #ffffff !important;
+  --tw-prose-bold: #ffffff !important;
+  --tw-prose-counters: #ffffff !important;
+  --tw-prose-bullets: #ffffff !important;
+  --tw-prose-quotes: #ffffff !important;
+  --tw-prose-code: #ffffff !important;
+}
+
 
